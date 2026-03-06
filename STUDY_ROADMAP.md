@@ -46,7 +46,7 @@ Ignore on first pass:
 
 Goal: be able to explain semilattice in your own words. If you can't, re-read.
 
-### Phase 2 — Implement State-Based CRDTs (Days 3–4)
+### Phase 2 — Implement CRDTs (Days 3–5)
 
 Implement in this order — each one adds a new idea the next one needs:
 
@@ -54,8 +54,27 @@ Implement in this order — each one adds a new idea the next one needs:
 2. **2P-Set** — tombstoning, preconditions, remove-wins
 3. **LWW-Register** — timestamp conflict, tiebreaker necessity, silent data loss
 4. **OR-Set** — unique tags, observed-remove, add-wins, unbounded storage
+5. **MV-Register** — surfacing conflicts instead of silently discarding, vector-clock-based concurrency tracking
 
-### Phase 3 — YJS Internals (Days 5+)
+### Phase 2.5 — Read Before YJS (Day 5, after MV-Register)
+
+Before jumping to YJS, read these two specs from the paper. No implementation needed — just read the spec text and understand the idea.
+
+| Spec | Why |
+|---|---|
+| **Spec 19 (RGA)** | Main competing sequence CRDT to YJS's YATA. Can't understand what YATA fixes without knowing what RGA does. |
+| **Spec 21 (OR-Cart)** | OR-Set applied to a map. `Y.Map` is OR-Cart. Reading it makes the leap from OR-Set to YJS maps obvious. |
+
+Optional reads (good context, not required):
+
+| Spec | Why |
+|---|---|
+| Spec 7 (PN-Counter) | Shows CRDT composition pattern — combining two CRDTs into one |
+| Spec 13 (U-Set) | Shows how causal delivery can eliminate tombstones entirely |
+| Spec 9 (Op-based LWW) | Makes atSource/downstream split concrete on a familiar example |
+| Spec 20 (Continuum sequence) | Understand the two schools of sequence CRDT (identifier-based vs linked-list) |
+
+### Phase 3 — YJS Internals (Days 6+)
 
 Read in this order:
 - StructStore
@@ -72,12 +91,13 @@ Compare your implementations to YJS:
 | Tombstone set (2P-Set `R`) | DeleteSet |
 | LWW-Register timestamp | Lamport clock on `Y.Map` keys |
 | OR-Set (element, tag) pair | Item with unique `{client, clock}` ID |
+| MV-Register concurrent value set | Why YJS chose LWW over MV for `Y.Map` (surfacing conflicts is too noisy for text) |
 
 ### Skipped Phases (from original plan)
 
 **Phase 3 (Op-based model)** — skipped as a standalone phase. CmRDT concepts were covered during paper reading (Section 2.2.2). The transition from state-based to op-based was understood conceptually without needing a separate implementation.
 
-**Phase 4 (Minimal Sequence CRDT)** — skipped intentionally. The paper's sequence specs (Logoot, LSEQ) use a different algorithm than YJS's YATA. Implementing Logoot would build wrong intuitions. All the building blocks are already in place (unique tags from OR-Set, tombstoning from 2P-Set, vector clocks from G-Counter) — the conceptual leap to YJS sequences is small enough to make directly.
+**Phase 4 (Minimal Sequence CRDT)** — skipped intentionally. The paper's sequence specs (Logoot, RGA) use different algorithms than YJS's YATA. Implementing them would build wrong intuitions for the wrong algorithm. Instead: read Spec 19 (RGA) conceptually in Phase 2.5, understand what problem it solves, then go directly to YJS's YATA. All the building blocks are already in place (unique tags from OR-Set, tombstoning from 2P-Set, vector clocks from G-Counter).
 
 ---
 
@@ -172,26 +192,37 @@ Answer: No. A system is distributed whenever multiple independent agents hold st
 
 ---
 
-### Day 5 — Documentation + Decisions
+### Day 5 — MV-Register + Reading Decisions
 
-**Created:**
+**Implemented: MV-Register (Spec 10)**
+
+Instead of picking one winner when two replicas write concurrently (LWW), MV-Register keeps ALL concurrent values. After merge, the register holds a set of values. The application layer sees the conflict and decides what to do — show a UI prompt, merge programmatically, etc.
+
+Key contrast with LWW-Register (Day 4):
+- LWW: concurrent writes → one wins, one silently disappears
+- MV-Register: concurrent writes → both survive, conflict surfaced explicitly
+
+The internal payload is a `Map<replicaId, {value, timestamp}>`. A value is "concurrent" with another if neither causally happened before the other — detected by comparing timestamps. `values()` returns all entries where no other entry has a strictly higher timestamp from the same or later replica.
+
+**Why this matters for YJS:** `Y.Map` uses LWW, not MV-Register. Understanding MV-Register makes it clear this was a deliberate choice — surfacing conflicts on every concurrent map edit would be too noisy for real-time collaborative text. YJS picks LWW and trusts Lamport clocks to make it deterministic.
+
+**Documentation:**
 - README.md for each CRDT folder (concept, drawbacks, solutions, bridge to YJS)
-- Updated main README with project structure, getting started, implementation index, skipped specs reasoning
+- Updated main README with project structure, getting started, implementation index, reading guide
 
-**Decision: skip sequence CRDTs**
+**Decision: read but don't implement RGA and OR-Cart (Specs 19 and 21)**
 
-The paper's sequence specs (Logoot, LSEQ, RGA — Specs 17–19) use different algorithms than YJS's YATA. Implementing Logoot would build intuitions that don't transfer to YJS. All the foundations are in place — unique tags (OR-Set), tombstoning (2P-Set), vector clocks (G-Counter). The leap to YJS sequences is small enough to make directly from the YJS docs.
+RGA is the closest sequence CRDT to YJS's YATA — but YATA fixes an interleaving problem RGA has. Reading the spec is enough to understand what YATA is solving. Implementing RGA would build the wrong muscle memory. OR-Cart (Spec 21) is OR-Set on a map — reading it takes 5 minutes and directly explains how `Y.Map` works.
 
-**Decision: skip Graphs and Maps/Docs**
+**Decision: skip graphs entirely (Specs 16–18), skip Logoot in depth (Spec 20)**
 
-- Graph CRDTs (Specs 14–16): too niche, YJS doesn't use them
-- Map/Document CRDTs (Specs 20–21): this IS what `Y.Map`, `Y.Array`, `Y.Doc` are — better learned from YJS directly
+YJS doesn't use graph CRDTs. Logoot's identifier-based approach is further from YATA than RGA is.
 
-**Pattern that emerged across all 4 implementations:**
+**Pattern that emerged across all 5 implementations:**
 
 Every CRDT drawback is a tension between two things:
 - **Convergence without coordination** (the CRDT promise)
-- **Some other property** (garbage collection, true deletion, ordering, re-add)
+- **Some other property** (garbage collection, true deletion, ordering, re-add, conflict visibility)
 
 You can always have convergence. But every other property costs something. CRDTs make those costs explicit.
 
@@ -220,6 +251,7 @@ Checkpoint answers are in each CRDT's README:
 - [2P-Set checkpoints](./(2)%202p-set/README.md#checkpoint-answers)
 - [LWW-Register checkpoints](./(3)%20lww-register/README.md#checkpoint-answers)
 - [OR-Set checkpoints](./(4)%20or-set/README.md#checkpoint-answers)
+- [MV-Register checkpoints](./(5)%20mv-register/README.md#checkpoint-answers)
 
 ---
 

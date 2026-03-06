@@ -22,7 +22,7 @@ The roadmap captures the full learning plan, what was studied each day, why cert
 - [Section 2.2.2 — Operation-Based Replication (CmRDT)](#section-222--operation-based-replication-cmrdt)
 - [Implementations](#implementations)
   - [The 21 Specs — What to Read and What to Skip](#the-21-specs--what-to-read-and-what-to-skip)
-  - [Why these 4?](#why-these-4)
+  - [Why these 5?](#why-these-5)
   - [Skipped Specs — and Why](#skipped-specs--and-why)
   - [How to Test Each CRDT](#how-to-test-each-crdt)
 
@@ -61,6 +61,11 @@ crdt-foundation/
 ├── (4) or-set/
 │   ├── implementation.ts       # ORSet class
 │   ├── or-set.test.ts          # Tests
+│   └── README.md
+│
+├── (5) mv-register/
+│   ├── implementation.ts       # MVRegister<T> class
+│   ├── mv-register.test.ts     # Tests
 │   └── README.md
 │
 ├── README.md                   # This file — theory notes + implementation index
@@ -722,88 +727,112 @@ Without causal delivery, a replica might try to remove "a" before it was ever ad
 
 ## Implementations
 
-### The 21 Specs — What to Read and What to Skip
+### All 21 Specs — What We Implemented and What We Skipped
 
-The 21 specs in the paper are a **catalog, not a curriculum** — like a dictionary. You don't read a dictionary cover to cover. You look up what you need.
+The 21 specs in the paper are a **catalog, not a curriculum**. Specs 1 and 2 are skeleton templates — every other spec fills in those templates for a specific data structure.
 
-Specs 1 and 2 are not actual CRDTs — they are the **skeleton templates** that all other specs follow:
-- **Spec 1** = state-based template (`payload / initial / query / update / compare / merge`) — already covered
-- **Spec 2** = op-based template (`payload / initial / query / update / atSource / downstream`) — already covered
-
-Every spec from 3–21 is just one of these two templates filled in with a specific data structure. Once you've seen the templates, you can read any spec and instantly understand its structure.
-
-| Specs | Category | Verdict |
+| Spec | Exact Name in Paper | Our Decision |
 |---|---|---|
-| 1–2 | State-based and op-based templates | ✅ Already covered |
-| 3–5 | Counter variants | ✅ Implemented G-Counter — covers the whole family |
-| 6–7 | Register variants | ✅ Implemented LWW-Register |
-| 8–10 | Set variants (G-Set, 2P-Set, U-Set) | ✅ Implemented 2P-Set |
-| 11–13 | OR-Set and variants | ✅ Implemented OR-Set |
-| 14–16 | Graph variants | ❌ Skipped — see below |
-| 17–19 | Sequence/array CRDTs | ❌ Skipped — see below |
-| 20–21 | Map/Document CRDTs | ❌ Skipped — see below |
-
-The 21 specs are not 21 different ideas — they are **4–5 ideas with minor variations**:
-
-- **Counters** — vector clocks + max merge
-- **Registers** — timestamp or version-based conflict resolution
-- **Sets** — tombstoning or unique tags
-- **Sequences** — unique identifiers per character (what YJS implements)
-- **Maps/Docs** — composition of the above
-
-Once you implement one from each family, you've understood the family. The variants are just tradeoffs — more bandwidth vs less storage, add-wins vs remove-wins, etc.
+| 1 | Outline of a state-based object (CvRDT template) | ✅ Covered during paper reading |
+| 2 | Outline of an operation-based object (CmRDT template) | ✅ Covered during paper reading |
+| 3 | Op-based emulation of state-based object | ⬜ Skip — pure theory |
+| 4 | State-based emulation of op-based object | ⬜ Skip — pure theory |
+| 5 | Op-based Counter | ⬜ Skip — trivial after G-Counter |
+| 6 | State-based G-Counter (increment-only vector counter) | ✅ **Implemented** |
+| 7 | State-based PN-Counter | 📖 Good to read — CRDT composition |
+| 8 | State-based LWW-Register | ✅ **Implemented** |
+| 9 | Op-based LWW-Register | 📖 Good to read — atSource/downstream in practice |
+| 10 | State-based MV-Register (Multi-Value Register) | ✅ **Implemented** |
+| 11 | State-based G-Set (Grow-only Set) | ⬜ Skip — already inside 2P-Set and OR-Set |
+| 12 | State-based 2P-Set (Two-Phase Set) | ✅ **Implemented** |
+| 13 | Op-based U-Set (2P-Set with unique elements) | 📖 Good to read — tombstones drop under causal delivery |
+| 14 | Op-based Molli-Weiss-Skaf Set (PN-Set variant) | ⬜ Skip — anomaly-for-anomaly tradeoff, unused |
+| 15 | Op-based OR-Set (Observed-Remove Set) | ✅ **Implemented** |
+| 16 | Op-based 2P2P-Graph | ⬜ Skip — graphs, not sequences |
+| 17 | Op-based Add-only Monotonic DAG | ⬜ Skip — graphs, not sequences |
+| 18 | Op-based Add-Remove Partial Order | ⬜ Skip — basis for WOOT, not YATA |
+| 19 | Op-based RGA (Replicated Growable Array) | 📌 **Must read** — main competing sequence CRDT to YATA |
+| 20 | Op-based Mutable sequence based on the continuum | 📖 Good to read — Logoot-style identifiers |
+| 21 | Op-based OR-Cart (Observed-Remove Shopping Cart) | 📌 **Must read** — OR-Set applied to a map; direct precursor to Y.Map |
 
 ---
 
-### Why these 4?
+### Why these 5?
 
-Each one teaches a distinct pattern. After these, you've seen everything that matters before moving to YJS.
+Each implements a distinct pattern. Together they cover every fundamental idea you need before reading YJS internals.
 
-| # | CRDT | Status | Notes |
+| Spec | CRDT | Status | What it teaches |
 |---|------|--------|-------|
-| 1 | **[G-Counter](./(1)%20g-counter/README.md)** | ✅ Done | Vector clocks, semilattice, element-wise max merge |
-| 2 | **[2P-Set](./(2)%202p-set/README.md)** | ✅ Done | Tombstoning, remove-wins, preconditions |
-| 3 | **[LWW-Register](./(3)%20lww-register/README.md)** | ✅ Done | Timestamp conflict resolution, tiebreakers, silent data loss |
-| 4 | **[OR-Set](./(4)%20or-set/README.md)** | ✅ Done | Unique tags per add, observed-remove, add-wins, unbounded storage |
+| **Spec 6** | **[G-Counter](./(1)%20g-counter/README.md)** | ✅ Done | Vector clocks, semilattice, element-wise max merge |
+| **Spec 12** | **[2P-Set](./(2)%202p-set/README.md)** | ✅ Done | Tombstoning, remove-wins, preconditions |
+| **Spec 8** | **[LWW-Register](./(3)%20lww-register/README.md)** | ✅ Done | Timestamp conflict resolution, tiebreakers, silent data loss |
+| **Spec 15** | **[OR-Set](./(4)%20or-set/README.md)** | ✅ Done | Unique tags per add, observed-remove, add-wins, unbounded storage |
+| **Spec 10** | **[MV-Register](./(5)%20mv-register/README.md)** | ✅ Done | Conflict surfacing vs silent loss, vector-clock-based concurrency tracking |
 
 ---
 
-### Skipped Specs — and Why
+### Reading Guide — Skipped Specs
 
-#### Specs 3–5 variants: PN-Counter, others
+Not every spec needs to be implemented. But some are worth reading before moving to YJS. Here's the breakdown.
 
-We implemented G-Counter (Spec 3). The remaining counter specs (Spec 4: PN-Counter, Spec 5: variants) add decrement by using two G-Counters subtracted from each other. Once you understand G-Counter, PN-Counter is a 5-line extension — no new concept. Skipped.
+#### Legend
+- 📌 **Must read** — directly required to understand YJS internals
+- 📖 **Good to read** — builds useful context, 5–15 minutes each
+- ⬜ **Skip** — no new insight beyond what we already implemented
 
-#### Specs 6–7 variants: MV-Register
+---
 
-We implemented LWW-Register. The alternative is MV-Register (Multi-Value Register), which keeps ALL concurrent values instead of picking a winner. This surfaces conflicts to the application layer rather than silently discarding. Worth knowing about — but YJS doesn't use it, and LWW taught the core idea (timestamp-based conflict resolution). Skipped.
+#### ⬜ Specs 3–4: Emulation specs
 
-#### Specs 8–10 variants: G-Set, U-Set
+Spec 3 shows how to emulate a state-based object using op-based delivery. Spec 4 is the reverse. Both prove the two styles are theoretically equivalent — but that proof is plumbing, not a new CRDT pattern. Skip.
 
-We implemented 2P-Set. G-Set (Spec 8) is simpler — add-only, no remove. We used it as the building block inside 2P-Set and OR-Set without naming it. U-Set (Spec 10) is 2P-Set restricted to unique elements, which is a minor constraint. Both are subsumed by what we built. Skipped.
+#### ⬜ Spec 5: Op-based Counter
 
-#### Specs 11–13 variants: OR-Set variants
+A trivial op-based counter. Increment and decrement just add/subtract locally — they commute because integer addition commutes. You already understand this from G-Counter. Skip.
 
-We implemented OR-Set (Spec 11). Specs 12–13 are variations with different tradeoffs (different tag structures, different GC approaches). None introduce a new fundamental concept. Skipped.
+#### 📖 Spec 7: State-based PN-Counter
 
-#### Specs 14–16: Graph CRDTs
+Two G-Counters composed together — one for increments (`P`), one for decrements (`N`). `value() = sum(P) - sum(N)`. Merge each independently. Worth reading because it introduces **CRDT composition**: combining two CRDTs into a third. That pattern appears in OR-Set (two G-Sets inside it) and in YJS. Not worth implementing — it's literally two G-Counters.
 
-Vertices and edges as CRDTs. Used for distributed graph databases. YJS does not use graph CRDTs — its document model is a sequence, not a graph. Too niche to be worth implementing before YJS. **Skipped.**
+#### 📖 Spec 9: Op-based LWW-Register
 
-#### Specs 17–19: Sequence CRDTs (Logoot, LSEQ, RGA)
+Same conflict resolution as the state-based LWW-Register (Spec 8) we built, just delivered as operations. Reading it takes 5 minutes and makes the atSource/downstream split concrete on a real example — useful for understanding CmRDT delivery before reading YJS's update protocol.
 
-Sequence CRDTs assign unique positions to characters so concurrent inserts can both survive. This is what collaborative text editors need. However:
+#### ⬜ Spec 11: State-based G-Set
 
-1. The paper's sequence specs (Logoot, LSEQ) use a different algorithm than YJS. YJS uses **YATA** (Yet Another Transformation Approach), which handles interleaving conflicts differently.
-2. Implementing Logoot would build intuitions that are subtly wrong for YJS specifically.
-3. YJS docs explain YATA from scratch — implementing the wrong algorithm first would mean learning twice.
-4. You already have all the building blocks: unique tags (OR-Set), tombstoning (2P-Set), vector clocks (G-Counter). The conceptual leap to YJS sequences is small.
+Add-only set. Merge = union. We used this implicitly as the internal building block of 2P-Set and OR-Set. Already covered. Skip.
 
-**Skipped — learn sequences directly from YJS.**
+#### 📖 Spec 13: Op-based U-Set
 
-#### Specs 20–21: Map and Document CRDTs
+2P-Set (Spec 12) simplified under two assumptions: elements are unique, and causal delivery guarantees add arrives before remove. Under these conditions the tombstone set (`R`) becomes unnecessary — remove can physically delete. Good to read because it shows how delivery guarantees can eliminate data structure complexity. That's a key insight for YJS, which relies heavily on causal delivery.
 
-A CRDT Map is a key→value store where each value is itself a CRDT (e.g. an LWW-Register per key). A CRDT Document composes maps, sequences, and other CRDTs into a tree. This is exactly what `Y.Map`, `Y.Array`, and `Y.Doc` are. **Learning these from the paper would duplicate the YJS docs.** Skipped — learn them there.
+#### ⬜ Spec 14: Op-based Molli-Weiss-Skaf Set
+
+A PN-Set variant that tries to fix one anomaly and creates another. Not clean enough to use in practice, introduces no new fundamental idea. Skip.
+
+#### ⬜ Specs 16–18: Graph and Partial Order CRDTs
+
+- **Spec 16 (2P2P-Graph):** Two 2P-Sets, one for vertices and one for edges, maintaining `E ⊆ V × V`.
+- **Spec 17 (Add-only Monotonic DAG):** Edges can only be added if they maintain monotonic order — prevents cycles without coordination.
+- **Spec 18 (Add-Remove Partial Order):** Basis for WOOT collaborative editing. Vertices in a partial order with tombstones.
+
+YJS documents are sequences, not graphs. All three are theoretically interesting but contribute nothing to YJS understanding. Skip.
+
+#### 📌 Spec 19: Op-based RGA (Replicated Growable Array)
+
+**Read this before YJS.** RGA is the main competing sequence CRDT to YJS's YATA. The idea: every inserted element gets a unique `{replicaId, clock}` ID (sound familiar?). Concurrent inserts at the same position are ordered by comparing IDs — higher ID wins. The linked list is stable after merge.
+
+YATA (YJS's algorithm) is a refinement of RGA that handles one interleaving anomaly RGA doesn't. You can't understand what YATA is fixing without knowing what RGA does. **Read the spec, don't implement.** Implementing would build muscle memory for the wrong algorithm.
+
+#### 📖 Spec 20: Op-based Mutable sequence based on the continuum
+
+Logoot-style: elements get real-number-like identifiers from a dense space, so a new ID can always be allocated between any two existing ones. The basis for Logoot and LSEQ. Further from YJS's approach than RGA, but worth 5 minutes to understand that there are two schools of sequence CRDT (identifier-based vs tombstone-linked-list-based). YJS is the latter.
+
+#### 📌 Spec 21: Op-based OR-Cart (Observed-Remove Shopping Cart)
+
+**Read this before YJS.** OR-Cart applies OR-Set (Spec 15) to a shopping cart map — the payload is `(isbn, quantity, unique-tag)` triplets instead of plain elements. `add` for an ISBN replaces all observed entries for that ISBN (observed-remove) with a new one. `remove` tombstones all observed entries for the ISBN.
+
+This is OR-Set applied to a map. `Y.Map` is OR-Cart applied to a document. Reading it makes the jump from OR-Set to `Y.Map` a 2-line insight instead of a mystery.
 
 ---
 
