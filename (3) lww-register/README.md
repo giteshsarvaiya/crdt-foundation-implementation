@@ -75,6 +75,24 @@ The replica with the fastest clock or the most recent network activity always wi
 
 ---
 
+## Checkpoint Answers
+
+These answer the Phase 2 checklist questions from [STUDY_ROADMAP.md](../STUDY_ROADMAP.md) as they apply to LWW-Register.
+
+**Why "last write wins" is usually a bad idea**
+Because the losing write is silently discarded with no warning, no error, no conflict notification. Two users editing the same field concurrently — one edit simply vanishes. In most collaborative contexts, both edits had independent value. LWW throws one away without asking. It's only acceptable when "latest should win" is genuinely correct for the domain (sensor readings, profile photos, config flags).
+
+**Why tiebreakers must be data-based, not caller-based**
+Without a tiebreaker, equal timestamps produce `merge(A, B) ≠ merge(B, A)` — A keeps itself, B keeps itself, replicas diverge permanently. The bug: "keep existing" depends on who is calling merge, not on the data. Fix: use replicaId as a tiebreaker — both replicas look at the same two IDs and always pick the same winner. The decision is now in the data, not the caller.
+
+**Why logical clocks are better than wall clocks**
+Wall clocks can lie — a machine running 2 seconds fast always wins LWW conflicts, even for logically earlier writes. Logical clocks (Lamport, vector) track causal order instead of physical time. They never go backwards and are immune to clock skew.
+
+**All replicas converge without coordination**
+Verified by the convergence tests. Two replicas write different values at different timestamps — merging in either order always produces the value with the higher timestamp. The tiebreaker test confirms this holds even when timestamps are equal.
+
+---
+
 ## Bridge to YJS
 
 YJS maps (used in `Y.Map`) use LWW semantics for key conflicts. If two clients set the same key concurrently, the one with the higher Lamport clock wins. YJS uses logical clocks (not wall time) to avoid clock skew issues — but the resolution strategy is identical to what we implemented here.

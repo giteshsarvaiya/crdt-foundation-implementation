@@ -87,6 +87,27 @@ Because tombstones must be kept for GC to work correctly, user data that has bee
 
 ---
 
+## Checkpoint Answers
+
+These answer the Phase 2 checklist questions from [STUDY_ROADMAP.md](../STUDY_ROADMAP.md) as they apply to OR-Set.
+
+**Why OR-Set needs unique tags**
+Without unique tags, remove would have to target the element by name — which means it would kill all adds of that element, including concurrent ones from other replicas that haven't been received yet. Unique tags let remove target only the specific adds it has observed. Tags added concurrently survive because they were never tombstoned. The uniqueness is what makes "observed-remove" possible.
+
+**Why remove cannot blindly delete**
+If remove erased the element outright, any concurrent add from another replica would bring it back on merge (union would restore it). OR-Set solves this differently from 2P-Set: instead of preventing re-adds (2P-Set), it allows them — by giving each add its own tag, a remove only kills what it saw. Concurrent adds are untouched.
+
+**Understand tombstones and their cost**
+OR-Set has the same fundamental tombstone problem as 2P-Set, but worse — instead of one entry per element in `R`, OR-Set stores one entry per (element, tag) pair. Each add/remove cycle adds two permanent records. A high-churn system accumulates unbounded state. There is no safe way to delete tombstones without coordination.
+
+**All replicas converge without coordination**
+Verified by convergence tests. Two replicas independently add and remove elements — merging in either order produces identical `lookup()` results. No lock, no leader.
+
+**The key invariant: tag uniqueness**
+OR-Set's entire correctness depends on no two adds ever sharing a tag. If they do, a remove on one element silently tombstones the other's tag — data corruption with no error. In our implementation: `replicaId-counter`. In production: UUID v4.
+
+---
+
 ## Bridge to YJS
 
 YJS's `Item` — the unit of every insertion in a document — has a unique ID: `{client: number, clock: number}`. This is identical to our `"replicaId-counter"` tag. Every character, every element in a YJS array, every key-value pair in a YJS map is an `Item` with a unique ID.

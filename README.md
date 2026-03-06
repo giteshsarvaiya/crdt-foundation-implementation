@@ -2,7 +2,11 @@
 
 Working through **"A Comprehensive Study of Convergent and Commutative Replicated Data Types"** (Shapiro et al., INRIA).
 
-Goal: understand the paper section by section, then implement 4–5 CRDTs.
+Goal: understand the paper section by section, implement 4 CRDTs covering every fundamental pattern, then move to YJS internals.
+
+**→ [Study Roadmap, Day-by-Day Journal & Phase Checklists](./STUDY_ROADMAP.md)**
+
+The roadmap captures the full learning plan, what was studied each day, why certain specs were skipped, and answers to every phase checkpoint — tracking the path from the paper's theory to YJS's engineering decisions.
 
 ---
 

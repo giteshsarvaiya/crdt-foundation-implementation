@@ -57,6 +57,30 @@ Every sync sends the full array — even slots that haven't changed. With 100 re
 
 ---
 
+## Checkpoint Answers
+
+These answer the Phase 2 and Phase 3 checklist questions from [STUDY_ROADMAP.md](../STUDY_ROADMAP.md) as they apply to G-Counter.
+
+**All replicas converge without coordination**
+Yes — verified by the convergence test. Two replicas increment independently, merge in both orders, reach the same value. No lock, no leader, no network agreement required.
+
+**Simulate duplicate messages**
+Covered by the idempotency test: `merge(A, A).value() === A.value()`. Receiving the same state twice changes nothing — element-wise max of identical vectors is the same vector.
+
+**Simulate reordered messages**
+Covered by the commutativity test: `merge(A, B).value() === merge(B, A).value()`. Whether A's state arrives before B's or after makes no difference.
+
+**Simulate delayed merges**
+Covered by the associativity test: `merge(A, merge(B,C)) === merge(merge(A,B), C)`. Whether replicas sync in pairs or all at once, the result is identical.
+
+**Why sending full state doesn't scale**
+G-Counter sends the entire vector on every sync. With N replicas, every sync is O(N) even if only one slot changed. This is the bandwidth drawback documented above — the solution is delta-CRDTs.
+
+**Why vector clocks exist**
+G-Counter's payload IS a vector clock. Each slot answers "how much has replica i contributed?" When two peers connect and exchange vectors, they can compute exactly which operations the other is missing — without sending the full history. This is precisely how YJS state vectors work.
+
+---
+
 ## Bridge to YJS
 
 YJS tracks which operations each replica has seen using **state vectors** — a `Map<clientId, clock>` where `clock` is a logical counter. This is a G-Counter. When two YJS peers connect, they exchange state vectors to figure out what the other is missing — then only send the missing operations, not the full document.

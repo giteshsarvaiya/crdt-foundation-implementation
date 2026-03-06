@@ -61,6 +61,24 @@ When two replicas concurrently add and remove the same element, remove always wi
 
 ---
 
+## Checkpoint Answers
+
+These answer the Phase 2 checklist questions from [STUDY_ROADMAP.md](../STUDY_ROADMAP.md) as they apply to 2P-Set.
+
+**Why remove cannot blindly delete**
+In a distributed system, a replica doing `remove("x")` doesn't know what other replicas are doing concurrently. If it physically erased "x" from its set and another replica had just added "x", the merge would produce inconsistent results — "x" might appear or disappear depending on who merged with whom first. Tombstoning avoids this: the remove is recorded permanently, and merge (union of both `R` sets) ensures every replica eventually knows about it.
+
+**Understand tombstones and their cost**
+A tombstone is a permanent record that something was deleted. In 2P-Set, `R` is the tombstone set. Cost: `R` only grows — it never shrinks. An element removed a year ago still occupies space in `R` on every replica forever. This is the fundamental storage cost of coordination-free deletion.
+
+**All replicas converge without coordination**
+Verified by the convergence tests. Replica A adds "y", replica B removes "x" — merging in either order produces the same result. No lock, no leader, no agreement protocol.
+
+**Concurrent add + remove: remove wins**
+This is 2P-Set's defining behaviour. If A adds "x" and B removes "x" concurrently, after merge "x" is gone — because B's remove ends up in the merged `R`. This is remove-wins semantics, hardcoded into the design.
+
+---
+
 ## Bridge to YJS
 
 YJS's **delete set** is a tombstone set — exactly like `R` in 2P-Set. When you delete a character in a YJS document, its `Item` is not removed from the linked list. Instead it's marked as deleted. The delete set tracks which `Item` IDs have been tombstoned. On merge, delete sets are unioned — same as `R` in 2P-Set.

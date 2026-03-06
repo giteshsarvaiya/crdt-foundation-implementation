@@ -1,0 +1,301 @@
+# CRDT → YJS Study Roadmap
+
+This document captures the full learning plan, day-by-day journal, phase checklist, and key insights from studying the Shapiro et al. CRDT paper and implementing 4 CRDTs before moving to YJS internals.
+
+→ [Back to main README](./README.md)
+
+---
+
+## Resources
+
+| Resource | Relevance | Order |
+|---|---|---|
+| CRDT Foundational Paper (Shapiro et al., INRIA) | High | 1st |
+| YJS Internals documentation | High | 2nd |
+| Slides and talks by Kevin Jahns (YJS author) | High | 3rd |
+| Undo Support for CRDTs | Medium | Optional |
+| Real Differences between OT and CRDT in Co-Editors | Low | Optional |
+| YATA CRDT paper (basis for YJS algorithm) | Low | Optional |
+
+---
+
+## Learning Order
+
+```
+Paper (Phase 1) → Implementations (Phase 2) → YJS Internals (Phase 3)
+                                                    ↓
+                                          Optional: Undo, OT vs CRDT, YATA
+```
+
+---
+
+## Phase Plan
+
+### Phase 1 — Read the Foundational Paper (Days 1–2)
+
+Do NOT skim. Focus on:
+
+- Definition of convergence
+- CvRDT (state-based) vs CmRDT (operation-based)
+- Join-semilattice requirement
+- Commutativity, associativity, idempotency
+- Causal history, happens-before, liveness
+
+Ignore on first pass:
+- Heavy formal proof notation
+
+Goal: be able to explain semilattice in your own words. If you can't, re-read.
+
+### Phase 2 — Implement State-Based CRDTs (Days 3–4)
+
+Implement in this order — each one adds a new idea the next one needs:
+
+1. **G-Counter** — vector slots, element-wise max, three laws
+2. **2P-Set** — tombstoning, preconditions, remove-wins
+3. **LWW-Register** — timestamp conflict, tiebreaker necessity, silent data loss
+4. **OR-Set** — unique tags, observed-remove, add-wins, unbounded storage
+
+### Phase 3 — YJS Internals (Days 5+)
+
+Read in this order:
+- StructStore
+- Item structure
+- DeleteSet
+- Update encoding
+- Garbage collection
+
+Compare your implementations to YJS:
+
+| Your Implementation | YJS Equivalent |
+|---|---|
+| G-Counter vector | State vector (`Map<clientId, clock>`) |
+| Tombstone set (2P-Set `R`) | DeleteSet |
+| LWW-Register timestamp | Lamport clock on `Y.Map` keys |
+| OR-Set (element, tag) pair | Item with unique `{client, clock}` ID |
+
+### Skipped Phases (from original plan)
+
+**Phase 3 (Op-based model)** — skipped as a standalone phase. CmRDT concepts were covered during paper reading (Section 2.2.2). The transition from state-based to op-based was understood conceptually without needing a separate implementation.
+
+**Phase 4 (Minimal Sequence CRDT)** — skipped intentionally. The paper's sequence specs (Logoot, LSEQ) use a different algorithm than YJS's YATA. Implementing Logoot would build wrong intuitions. All the building blocks are already in place (unique tags from OR-Set, tombstoning from 2P-Set, vector clocks from G-Counter) — the conceptual leap to YJS sequences is small enough to make directly.
+
+---
+
+## Day-by-Day Journal
+
+### Day 1 — Paper: Theory Foundations
+
+**Covered:**
+- System Model — asynchronous network, non-byzantine nodes, crash-restart, partitions
+- Section 2.1 — Atoms vs Objects, four properties of an object (identity, payload, initial state, interface), why no transactions
+- Section 2.2 — Query vs Update operations, two styles (state-based, op-based)
+- Specification 1 (CvRDT template) — payload, query, update, compare, merge
+- Semilattice and LUB — why `max` = LUB for integers, why `union` = LUB for sets
+- The three merge laws — commutativity, associativity, idempotency, and what breaks without each
+
+**Key insight of the day:**
+The CRDT designer's job is just to pick a data structure where merge = LUB. If you do that, convergence is mathematically guaranteed without any coordination. The hard part is picking the right structure.
+
+**Analogy that clicked:**
+Semilattice = water flowing downhill. States only move "forward" (more information), never back. Two streams always merge into one.
+
+---
+
+### Day 2 — Paper: Deeper Replication + Op-Based Model
+
+**Covered:**
+- Section 2.2.1 — Atomicity, preconditions, causal history `C(xi)`, happens-before (`f → g`), concurrent operations, liveness
+- Section 2.2.2 — CmRDT two phases (atSource + downstream), downstream preconditions, reliable broadcast requirement, causal delivery
+- State-based vs op-based comparison — bandwidth tradeoff, network assumptions, idempotency requirement
+
+**Key insight of the day:**
+Concurrent operations are not a failure mode — they are the normal case. A CRDT is a data structure designed so that concurrency is safe by construction, not avoided by locking.
+
+**Question that came up:**
+Why is this called "distributed systems" — isn't that just servers?
+
+Answer: No. A system is distributed whenever multiple independent agents hold state and must coordinate without a shared clock or shared memory. Browsers, mobile apps, and browser tabs are just as distributed as server clusters. The math is identical — the deployment shape is different.
+
+---
+
+### Day 3 — Implementations: G-Counter + 2P-Set
+
+**G-Counter:**
+- Implemented vector of integers, one slot per replica
+- Each replica increments only its own slot — this constraint is what makes concurrent increments safe
+- Merge = element-wise max = LUB for integer vectors
+- Verified all three laws via tests: commutativity (order of merge irrelevant), associativity (grouping irrelevant), idempotency (duplicates harmless)
+
+**Key moment:** Watching the tests pass and realising the laws hold mathematically — not because we coded them in, but because element-wise max inherently satisfies them.
+
+**2P-Set:**
+- Two internal G-Sets: `A` (added) and `R` (removed/tombstones)
+- Element in set iff in `A` but not in `R`
+- Merge = union of both `A` sets + union of both `R` sets
+- Precondition: can only remove what's currently in the set
+
+**Key insight:** You cannot truly erase data in a distributed system without coordination. Tombstoning (marking as deleted, never erasing) is the only coordination-free approach. The cost: `R` grows forever.
+
+**Drawback discovered:** Once in `R`, an element can never come back. The remove wins permanently. This is a design choice — but a limiting one.
+
+---
+
+### Day 4 — Implementations: LWW-Register + OR-Set
+
+**LWW-Register:**
+- Single value + timestamp. Higher timestamp wins on merge.
+- Silent data loss: the losing write leaves no trace, no warning. This is the LWW tradeoff.
+- **Bug discovered mid-implementation:** what if two replicas write at the exact same timestamp?
+  - `A.merge(B)` → A keeps itself ("existing")
+  - `B.merge(A)` → B keeps itself ("existing")
+  - `merge(A, B) ≠ merge(B, A)` → commutativity broken → replicas permanently diverge
+- **Fix:** replicaId tiebreaker. Higher replicaId always wins on tie. Both replicas see the same two IDs, make the same decision. Commutativity restored.
+
+**Key insight:** Tiebreakers must be based on the data itself — not on who is calling merge. "Keep existing" is caller-dependent. "Higher replicaId wins" is data-dependent. Only the latter is safe.
+
+**OR-Set:**
+- Payload: `entries` (element → Set of tags) + `tombstones` (element → Set of tags)
+- Every `add()` generates a unique tag (`replicaId-counter`)
+- `remove()` tombstones only the tags it currently observes — not tags from replicas it hasn't seen
+- `merge()` = union of entries + union of tombstones
+- `lookup()` = does any tag exist in entries but NOT in tombstones?
+
+**The moment OR-Set clicked:** After implementing `remove()`, the question was "why doesn't B's remove kill A's concurrent add?" The answer: B's remove only knows about B's tags. A's tag was added concurrently — B never saw it, never tombstoned it, so after merge it's still alive. The "observed-remove" semantics fall out of the implementation naturally.
+
+**Re-add after remove worked:** New `add()` → new tag → never tombstoned → element visible again. 2P-Set cannot do this.
+
+**Drawbacks discovered:**
+1. Tombstones grow forever — same problem as 2P-Set, but now with tags making it worse
+2. Add-wins is baked in — no way to choose remove-wins without switching to 2P-Set
+3. Tag uniqueness is a hard assumption — collision = silent data corruption
+4. GDPR problem — deleted data is still physically present
+
+---
+
+### Day 5 — Documentation + Decisions
+
+**Created:**
+- README.md for each CRDT folder (concept, drawbacks, solutions, bridge to YJS)
+- Updated main README with project structure, getting started, implementation index, skipped specs reasoning
+
+**Decision: skip sequence CRDTs**
+
+The paper's sequence specs (Logoot, LSEQ, RGA — Specs 17–19) use different algorithms than YJS's YATA. Implementing Logoot would build intuitions that don't transfer to YJS. All the foundations are in place — unique tags (OR-Set), tombstoning (2P-Set), vector clocks (G-Counter). The leap to YJS sequences is small enough to make directly from the YJS docs.
+
+**Decision: skip Graphs and Maps/Docs**
+
+- Graph CRDTs (Specs 14–16): too niche, YJS doesn't use them
+- Map/Document CRDTs (Specs 20–21): this IS what `Y.Map`, `Y.Array`, `Y.Doc` are — better learned from YJS directly
+
+**Pattern that emerged across all 4 implementations:**
+
+Every CRDT drawback is a tension between two things:
+- **Convergence without coordination** (the CRDT promise)
+- **Some other property** (garbage collection, true deletion, ordering, re-add)
+
+You can always have convergence. But every other property costs something. CRDTs make those costs explicit.
+
+---
+
+## Phase Checklists
+
+### Phase 1 — Core CRDT Theory
+
+| Checkpoint | Answer |
+|---|---|
+| Explain convergence in one sentence | All replicas that have seen the same set of operations will hold identical state — regardless of the order those operations arrived |
+| Define CvRDT vs CmRDT | CvRDT: send full state, merge on receipt. CmRDT: send operations, replay on receipt |
+| Explain join-semilattice | A partial order where any two elements have a Least Upper Bound. States only move "forward" — merge always produces something ≥ both inputs |
+| Why merge must be commutative, associative, idempotent | Commutative: network order doesn't matter. Associative: grouping/batching doesn't matter. Idempotent: duplicate delivery doesn't corrupt state |
+| What breaks if merge is not monotonic | States can go backwards. A replica that receives an older state could overwrite newer information — convergence fails |
+| Why "last write wins" is usually a bad idea | It silently discards concurrent writes with no warning. Any write with a lower timestamp is gone forever, regardless of its logical importance |
+
+---
+
+### Phase 2 — Implementations
+
+Checkpoint answers are in each CRDT's README:
+
+- [G-Counter checkpoints](./(1)%20g-counter/README.md#checkpoint-answers)
+- [2P-Set checkpoints](./(2)%202p-set/README.md#checkpoint-answers)
+- [LWW-Register checkpoints](./(3)%20lww-register/README.md#checkpoint-answers)
+- [OR-Set checkpoints](./(4)%20or-set/README.md#checkpoint-answers)
+
+---
+
+### Phase 3 — Operation-Based Model
+
+| Checkpoint | Answer |
+|---|---|
+| Why sending full state doesn't scale | State grows over time. Sending the full G-Counter vector with 1000 replicas = 1000 integers per sync, even if only 1 changed. Op-based sends just the operation. |
+| Idempotent operations | An operation that can be applied multiple times without changing the result beyond the first application. State-based merge is inherently idempotent. Op-based operations must be designed to be idempotent. |
+| Causal delivery vs total ordering | Causal: if A happened before B, every replica applies A before B. Total: every replica applies all ops in the same global order. Causal is weaker (and achievable without coordination). Total requires coordination. |
+| Duplicate operation replay | State-based: harmless (merge is idempotent). Op-based: must be handled explicitly — either by tracking seen operation IDs or by designing operations to be idempotent. |
+| Why vector clocks / Lamport clocks exist | Wall clocks lie (clock skew). Logical clocks track causal order without relying on physical time. Lamport: single counter adjusted upward on receive. Vector: one counter per replica — tracks full causal history. |
+
+---
+
+### Phase 5 — Invariant Thinking
+
+| Question | Answer from our implementations |
+|---|---|
+| What invariant must always hold? | merge(A, B) = merge(B, A). Every replica that has seen the same operations must hold identical state. |
+| What state is allowed to grow forever? | Tombstone sets (2P-Set `R`, OR-Set `tombstones`), G-Counter slots, OR-Set `entries` |
+| What state can be garbage-collected? | Tombstones where every known replica has already received them. Requires coordination to determine the stable frontier. |
+| What breaks if messages are delayed indefinitely? | Safety (no wrong states) is preserved. Liveness (eventual convergence) is lost — replicas never catch up. |
+| What breaks if replicas go offline for days? | Nothing, structurally. When they reconnect, merge brings them up to date. The cost: catching up may mean applying a large number of operations at once. |
+
+---
+
+### Phase 6 — YJS Internals
+
+*(To be filled in during YJS study)*
+
+| Checkpoint | Answer |
+|---|---|
+| Recognize StructStore as a sequence CRDT | |
+| Understand why YJS compresses identifiers | |
+| Understand what DeleteSet represents | |
+| See how YJS avoids metadata explosion | |
+| Understand why GC is optional | |
+| Point at an optimization and explain what pain it solves | |
+
+---
+
+## The Distributed Systems Question
+
+**Q: Why do we call this "distributed systems"? Is it the same as server architecture?**
+
+No — but it is the same problem class.
+
+A system is distributed when:
+- State lives in more than one place
+- Updates happen independently
+- Messages can be delayed, reordered, duplicated, or dropped
+- No single authority can say "this happened first"
+
+This applies equally to server clusters, browser tabs, mobile devices, and offline-capable apps. The deployment shape is different. The constraints are identical.
+
+**The key misconception:** "Distributed systems = server clusters."
+
+That's only one deployment shape. Distributed systems theory is about constraints, not topology.
+
+**Why CRDTs feel harder than classic distributed systems:**
+
+In server-side distributed systems, you often "cheat" with leader election, locks, transactions, and total ordering. In CRDT systems, all cheats are removed — no leader, no lock, no coordination. Consistency must emerge mathematically from the merge rules. That's why CRDTs feel brutal.
+
+**Comparison:**
+
+| Aspect | Server Architecture | CRDT / Collaboration |
+|---|---|---|
+| Nodes | Servers | Clients / replicas |
+| Ownership | Central authority | No single authority |
+| Writes | Often serialized | Concurrent by design |
+| Consistency | Enforced | Emergent |
+| Coordination | Explicit | Avoided |
+| Failure model | Node crashes | Network partitions |
+| Recovery | Replay logs | Merge state |
+
+Same theory. Different battlefield.
+
+CRDTs are an AP system (per CAP theorem) by design — they choose Availability and Partition tolerance, giving up Strong Consistency. That's the deliberate tradeoff that makes offline editing possible.
