@@ -46,15 +46,20 @@ Ignore on first pass:
 
 Goal: be able to explain semilattice in your own words. If you can't, re-read.
 
-### Phase 2 — Implement CRDTs (Days 3–5)
+### Phase 2 — Implement CRDTs (Days 3–6)
 
 Implement in this order — each one adds a new idea the next one needs:
 
-1. **G-Counter** — vector slots, element-wise max, three laws
-2. **2P-Set** — tombstoning, preconditions, remove-wins
-3. **LWW-Register** — timestamp conflict, tiebreaker necessity, silent data loss
-4. **OR-Set** — unique tags, observed-remove, add-wins, unbounded storage
-5. **MV-Register** — surfacing conflicts instead of silently discarding, vector-clock-based concurrency tracking
+**State-based (CvRDT):**
+1. **G-Counter (Spec 6)** — vector slots, element-wise max, three laws
+2. **2P-Set (Spec 12)** — tombstoning, preconditions, remove-wins
+3. **LWW-Register (Spec 8)** — timestamp conflict, tiebreaker necessity, silent data loss
+4. **OR-Set state-based (Spec 15 variant)** — unique tags, observed-remove, add-wins, tombstone growth
+5. **MV-Register (Spec 10)** — surfacing conflicts instead of silently discarding
+
+**Op-based (CmRDT) — how YJS actually works:**
+6. **Op-LWW-Register (Spec 9)** — atSource/downstream split in code, Lamport clock, ops as first-class objects
+7. **Op-OR-Set (Spec 15)** — no tombstones, causal delivery replaces storage, direct YJS analogue
 
 ### Phase 2.5 — Read Before YJS (Day 5, after MV-Register)
 
@@ -88,10 +93,12 @@ Compare your implementations to YJS:
 | Your Implementation | YJS Equivalent |
 |---|---|
 | G-Counter vector | State vector (`Map<clientId, clock>`) |
-| Tombstone set (2P-Set `R`) | DeleteSet |
+| Tombstone set (2P-Set `R`) | DeleteSet (structural tombstones) |
 | LWW-Register timestamp | Lamport clock on `Y.Map` keys |
 | OR-Set (element, tag) pair | Item with unique `{client, clock}` ID |
 | MV-Register concurrent value set | Why YJS chose LWW over MV for `Y.Map` (surfacing conflicts is too noisy for text) |
+| **Op-LWW write() → op → apply()** | **YJS insert: atSource → Update → applyUpdate()** |
+| **Op-OR-Set add/remove ops** | **YJS insert/delete: broadcast ops, no tombstone content** |
 
 ### Skipped Phases (from original plan)
 
@@ -228,6 +235,34 @@ You can always have convergence. But every other property costs something. CRDTs
 
 ---
 
+### Day 6 — Op-based Implementations
+
+**Why op-based matters:** Everything up to Day 5 was state-based — send full state, merge on receipt. YJS is op-based — send operations, apply on receipt. The mental model is different enough that both need to be implemented.
+
+**Op-LWW-Register (Spec 9):**
+- Same LWW conflict logic as Spec 8, different delivery
+- Introduced the two-phase structure in code: `write()` = atSource, `apply()` = downstream
+- `write()` generates an op and returns it — the caller broadcasts it
+- `apply()` runs at EVERY replica, including source — applying Lamport clock update + LWW rule
+- Key insight: the op is a 3-field object `{value, timestamp, replicaId}` — small and self-contained
+- Lamport clock: increment on write, take max on receive — immune to clock skew
+
+**Op-OR-Set (Spec 15 — the actual paper spec):**
+- Our folder 4 was a state-based interpretation. This is the real paper spec.
+- **No tombstones.** Removes physically delete the targeted tags.
+- `add()`: generate unique tag → apply at source → return op for broadcast
+- `remove()`: capture observed tags at source → apply at source → return op for broadcast
+- `apply(removeOp)`: deletes the specific tags named in the op — concurrent add tags with different names are untouched
+- Key insight: tombstones in state-based exist to block future state merges. Op-based has no state merges — each op targets specific tags. Causal delivery ensures the ordering is correct.
+
+**The contrast that emerged:**
+- State-based: tolerant of network failures (next sync catches up everything), but tombstones grow forever
+- Op-based: smaller payload, no tombstones, but requires reliable+causal delivery and an op log for reconnect
+
+YJS is op-based and handles the network requirements with state vectors (tracking which ops each peer has seen) and op retransmission on reconnect. The op log IS the document — a new peer can reconstruct the document from scratch by replaying all ops.
+
+---
+
 ## Phase Checklists
 
 ### Phase 1 — Core CRDT Theory
@@ -252,6 +287,8 @@ Checkpoint answers are in each CRDT's README:
 - [LWW-Register checkpoints](./(3)%20lww-register/README.md#checkpoint-answers)
 - [OR-Set checkpoints](./(4)%20or-set/README.md#checkpoint-answers)
 - [MV-Register checkpoints](./(5)%20mv-register/README.md#checkpoint-answers)
+- [Op-LWW-Register checkpoints](./(6)%20op-lww-register/README.md#checkpoint-answers)
+- [Op-OR-Set checkpoints](./(7)%20op-or-set/README.md#checkpoint-answers)
 
 ---
 

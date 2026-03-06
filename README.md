@@ -2,7 +2,7 @@
 
 Working through **"A Comprehensive Study of Convergent and Commutative Replicated Data Types"** (Shapiro et al., INRIA).
 
-Goal: understand the paper section by section, implement 4 CRDTs covering every fundamental pattern, then move to YJS internals.
+Goal: understand the paper section by section, implement 7 CRDTs covering both state-based and op-based patterns, then move to YJS internals.
 
 **→ [Study Roadmap, Day-by-Day Journal & Phase Checklists](./STUDY_ROADMAP.md)**
 
@@ -22,8 +22,9 @@ The roadmap captures the full learning plan, what was studied each day, why cert
 - [Section 2.2.2 — Operation-Based Replication (CmRDT)](#section-222--operation-based-replication-cmrdt)
 - [Implementations](#implementations)
   - [The 21 Specs — What to Read and What to Skip](#the-21-specs--what-to-read-and-what-to-skip)
-  - [Why these 5?](#why-these-5)
-  - [Skipped Specs — and Why](#skipped-specs--and-why)
+  - [Why these 7?](#why-these-7)
+  - [Why Both Models — State-Based and Op-Based?](#why-both-models--state-based-and-op-based)
+  - [Reading Guide — Skipped Specs](#reading-guide--skipped-specs)
   - [How to Test Each CRDT](#how-to-test-each-crdt)
 
 ---
@@ -66,6 +67,16 @@ crdt-foundation/
 ├── (5) mv-register/
 │   ├── implementation.ts       # MVRegister<T> class
 │   ├── mv-register.test.ts     # Tests
+│   └── README.md
+│
+├── (6) op-lww-register/
+│   ├── implementation.ts       # OpLWWRegister<T> — op-based, write()/apply()
+│   ├── op-lww-register.test.ts # Tests
+│   └── README.md
+│
+├── (7) op-or-set/
+│   ├── implementation.ts       # OpORSet — op-based, no tombstones
+│   ├── op-or-set.test.ts       # Tests
 │   └── README.md
 │
 ├── README.md                   # This file — theory notes + implementation index
@@ -741,13 +752,13 @@ The 21 specs in the paper are a **catalog, not a curriculum**. Specs 1 and 2 are
 | 6 | State-based G-Counter (increment-only vector counter) | ✅ **Implemented** |
 | 7 | State-based PN-Counter | 📖 Good to read — CRDT composition |
 | 8 | State-based LWW-Register | ✅ **Implemented** |
-| 9 | Op-based LWW-Register | 📖 Good to read — atSource/downstream in practice |
+| 9 | Op-based LWW-Register | ✅ **Implemented** |
 | 10 | State-based MV-Register (Multi-Value Register) | ✅ **Implemented** |
 | 11 | State-based G-Set (Grow-only Set) | ⬜ Skip — already inside 2P-Set and OR-Set |
 | 12 | State-based 2P-Set (Two-Phase Set) | ✅ **Implemented** |
 | 13 | Op-based U-Set (2P-Set with unique elements) | 📖 Good to read — tombstones drop under causal delivery |
 | 14 | Op-based Molli-Weiss-Skaf Set (PN-Set variant) | ⬜ Skip — anomaly-for-anomaly tradeoff, unused |
-| 15 | Op-based OR-Set (Observed-Remove Set) | ✅ **Implemented** |
+| 15 | Op-based OR-Set (Observed-Remove Set) | ✅ **Implemented** (both state-based and op-based variants) |
 | 16 | Op-based 2P2P-Graph | ⬜ Skip — graphs, not sequences |
 | 17 | Op-based Add-only Monotonic DAG | ⬜ Skip — graphs, not sequences |
 | 18 | Op-based Add-Remove Partial Order | ⬜ Skip — basis for WOOT, not YATA |
@@ -757,17 +768,59 @@ The 21 specs in the paper are a **catalog, not a curriculum**. Specs 1 and 2 are
 
 ---
 
-### Why these 5?
+### Why these 7?
 
-Each implements a distinct pattern. Together they cover every fundamental idea you need before reading YJS internals.
+The first 5 cover every fundamental state-based pattern. The last 2 cover the op-based (CmRDT) model — which is how YJS actually works.
 
-| Spec | CRDT | Status | What it teaches |
-|---|------|--------|-------|
-| **Spec 6** | **[G-Counter](./(1)%20g-counter/README.md)** | ✅ Done | Vector clocks, semilattice, element-wise max merge |
-| **Spec 12** | **[2P-Set](./(2)%202p-set/README.md)** | ✅ Done | Tombstoning, remove-wins, preconditions |
-| **Spec 8** | **[LWW-Register](./(3)%20lww-register/README.md)** | ✅ Done | Timestamp conflict resolution, tiebreakers, silent data loss |
-| **Spec 15** | **[OR-Set](./(4)%20or-set/README.md)** | ✅ Done | Unique tags per add, observed-remove, add-wins, unbounded storage |
-| **Spec 10** | **[MV-Register](./(5)%20mv-register/README.md)** | ✅ Done | Conflict surfacing vs silent loss, vector-clock-based concurrency tracking |
+| Spec | CRDT | Model | Status | What it teaches |
+|---|------|-------|--------|-------|
+| **Spec 6** | **[G-Counter](./(1)%20g-counter/README.md)** | State-based | ✅ Done | Vector clocks, semilattice, element-wise max merge |
+| **Spec 12** | **[2P-Set](./(2)%202p-set/README.md)** | State-based | ✅ Done | Tombstoning, remove-wins, preconditions |
+| **Spec 8** | **[LWW-Register](./(3)%20lww-register/README.md)** | State-based | ✅ Done | Timestamp conflict resolution, tiebreakers, silent data loss |
+| **Spec 15** | **[OR-Set (state-based)](./(4)%20or-set/README.md)** | State-based | ✅ Done | Unique tags, observed-remove, add-wins, unbounded tombstone storage |
+| **Spec 10** | **[MV-Register](./(5)%20mv-register/README.md)** | State-based | ✅ Done | Conflict surfacing vs silent loss, vector-clock-based concurrency |
+| **Spec 9** | **[Op-LWW-Register](./(6)%20op-lww-register/README.md)** | **Op-based** | ✅ Done | atSource/downstream split, ops as first-class objects, Lamport clock |
+| **Spec 15** | **[Op-OR-Set](./(7)%20op-or-set/README.md)** | **Op-based** | ✅ Done | No tombstones, causal delivery, ops as direct YJS analogue |
+
+---
+
+### Why Both Models — State-Based and Op-Based?
+
+YJS is op-based. So why did we spend 5 implementations on state-based CRDTs?
+
+**State-based teaches the concepts. Op-based teaches the delivery mechanism. You cannot understand the delivery without first understanding the concepts.**
+
+Every state-based implementation maps to something concrete inside YJS. Skip any one of them, and a piece of YJS becomes opaque:
+
+| Our implementation | What it taught | Where it appears in YJS |
+|---|---|---|
+| **G-Counter** (state-based, Spec 6) | What a vector clock is and how replicas compare their knowledge | YJS's **state vector** (`Map<clientId, clock>`) is a G-Counter. When two peers connect, they exchange state vectors and compute what ops the other is missing — that comparison is exactly G-Counter's `compare()` |
+| **2P-Set** (state-based, Spec 12) | Why you cannot truly delete distributed data — tombstoning is the only coordination-free approach | YJS's **DeleteSet** is a tombstone store. Deleted Items are not removed from the linked list — they are marked. Without understanding 2P-Set, the DeleteSet looks like an arbitrary design choice |
+| **LWW-Register** (state-based, Spec 8) | How timestamp-based conflict resolution works, why tiebreakers must be data-based | **Y.Map** uses LWW with Lamport clocks for concurrent key writes. The conflict logic is identical — higher clock wins, clientId breaks ties |
+| **OR-Set** (state-based, Spec 15 variant) | What unique tags per operation are, what observed-remove means, why tombstones grow unboundedly | Every YJS **Item** has a unique `{client, clock}` ID — this is the tag. The DeleteSet is the tombstone set. Observed-remove is how YJS handles concurrent insert+delete |
+| **MV-Register** (state-based, Spec 10) | What the alternative to LWW looks like — keep all concurrent values, surface the conflict | Explains why YJS **chose LWW over MV for Y.Map**. Surfacing a conflict set on every concurrent map edit in a real-time editor would be unusable. LWW is the right tradeoff here |
+| **Op-LWW-Register** (op-based, Spec 9) | The atSource/downstream two-phase split in code. Ops as small broadcast objects. Lamport clock generation | YJS insert: atSource captures `{client, clock}`, left/right origins → broadcast as an **Update** → each peer calls `Y.applyUpdate()` downstream. This is the exact same structure |
+| **Op-OR-Set** (op-based, Spec 15) | No tombstone store when delivery is causal. Operations physically remove specific tags. Concurrent adds are never targeted | YJS insert/delete: the DeleteSet carries target Item IDs, not a separate accumulating store. Concurrent insertions are unaffected because they have fresh IDs never in any DeleteSet |
+
+#### One important nuance about YJS's tombstones
+
+The Op-OR-Set has no tombstones at all — physical deletion. YJS is slightly different:
+
+YJS deleted Items **stay in the linked list** with a `deleted: true` flag — but their content is discarded. This is not the same as a growing tombstone store. The reason: Items serve a dual role in YJS. They are both **data** (the content you inserted) and **position anchors** (concurrent inserts reference left/right origin IDs to determine where to place themselves). Physically removing an Item would break those origin references and corrupt the ordering of concurrent inserts.
+
+So YJS uses **structural tombstones** (keep the position, discard the content) — not the accumulating tombstone set that state-based OR-Set builds up. The Op-OR-Set teaches why tombstones can be avoided with causal delivery. YJS extends that idea: even the structural tombstone is minimised by discarding content.
+
+#### Why YJS chose op-based
+
+| Concern | State-based | Op-based (what YJS uses) |
+|---|---|---|
+| What travels on every keystroke | Full document state (MBs) | One operation (bytes) |
+| Offline catch-up | Any sync catches up everything | Must retransmit missed ops from a log |
+| Duplicate delivery | Harmless — merge is idempotent | Must be deduplicated (YJS uses `{client, clock}` as op ID) |
+| Network requirement | Best-effort | Reliable + causal delivery |
+| Rebuild from scratch | Impossible without full state sync | Replay the op log — YJS's document IS its op log |
+
+Real-time collaborative editing has thousands of operations per minute. Sending full document state on every keystroke is not viable. Op-based wins on bandwidth by orders of magnitude. YJS manages the reliability and causal delivery requirements through state vector exchange on reconnect.
 
 ---
 
@@ -794,9 +847,9 @@ A trivial op-based counter. Increment and decrement just add/subtract locally �
 
 Two G-Counters composed together — one for increments (`P`), one for decrements (`N`). `value() = sum(P) - sum(N)`. Merge each independently. Worth reading because it introduces **CRDT composition**: combining two CRDTs into a third. That pattern appears in OR-Set (two G-Sets inside it) and in YJS. Not worth implementing — it's literally two G-Counters.
 
-#### 📖 Spec 9: Op-based LWW-Register
+#### ✅ Spec 9: Op-based LWW-Register
 
-Same conflict resolution as the state-based LWW-Register (Spec 8) we built, just delivered as operations. Reading it takes 5 minutes and makes the atSource/downstream split concrete on a real example — useful for understanding CmRDT delivery before reading YJS's update protocol.
+Implemented in folder `(6) op-lww-register/`. Same conflict resolution as Spec 8, but op-based — teaches the atSource/downstream two-phase structure in code. See [folder README](./(6)%20op-lww-register/README.md).
 
 #### ⬜ Spec 11: State-based G-Set
 

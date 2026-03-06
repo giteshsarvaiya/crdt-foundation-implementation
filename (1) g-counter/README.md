@@ -8,17 +8,17 @@
 
 ## What it is
 
-A distributed counter that only goes up. Each replica owns one slot in a shared array and can only increment its own slot. The total value is the sum of all slots. Merging two replicas takes the element-wise max.
+A distributed counter that only goes up. Each replica owns one entry in a shared Map and can only increment its own entry. The total value is the sum of all entries. Merging two replicas takes the element-wise max per key.
 
 ```
-3 replicas, initial state: [0, 0, 0]
+Replica 0 increments twice:  Map { 0→2 }
+Replica 1 increments once:   Map { 1→1 }   ← concurrent, no coordination
 
-Replica 0 increments twice:  [2, 0, 0]
-Replica 1 increments once:   [0, 1, 0]   ← concurrent, no coordination
-
-Merge (element-wise max):    [2, 1, 0]
-Value (sum):                  3           ← correct, no coordination needed
+Merge (max per key):          Map { 0→2, 1→1 }
+Value (sum):                  3              ← correct, no coordination needed
 ```
+
+The paper's original spec uses a fixed-size array. We use `Map<replicaId, count>` instead — which is exactly how YJS's state vector is structured.
 
 ## What it teaches
 
@@ -37,11 +37,11 @@ Value (sum):                  3           ← correct, no coordination needed
 
 ## Drawbacks
 
-### 1. Fixed replica count
+### 1. ~~Fixed replica count~~ — resolved in this implementation
 
-The array size is set at construction (`new GCounter(3)`). You cannot add a new replica later without resizing the array — and resizing requires coordination across all existing replicas.
+The paper's original fixed-array spec requires knowing the replica count at construction time. Resizing later requires coordination.
 
-**Solution:** Use a `Map<replicaId, count>` instead of a fixed array. New replicas start with no entry (treated as 0) and are added lazily as they appear. This is how production systems implement it.
+Our implementation uses `Map<replicaId, count>` — new replicas are added lazily as they appear, absent keys are treated as 0. No coordination needed. This is how YJS's state vector works.
 
 ### 2. Only counts up — no decrement
 
@@ -77,10 +77,10 @@ Covered by the associativity test: `merge(A, merge(B,C)) === merge(merge(A,B), C
 G-Counter sends the entire vector on every sync. With N replicas, every sync is O(N) even if only one slot changed. This is the bandwidth drawback documented above — the solution is delta-CRDTs.
 
 **Why vector clocks exist**
-G-Counter's payload IS a vector clock. Each slot answers "how much has replica i contributed?" When two peers connect and exchange vectors, they can compute exactly which operations the other is missing — without sending the full history. This is precisely how YJS state vectors work.
+G-Counter's payload IS a vector clock. Each entry answers "how much has replica i contributed?" When two peers connect and exchange their Maps, they can compute exactly which operations the other is missing — without sending the full history. This is precisely how YJS state vectors work, and our `Map<replicaId, count>` structure matches it directly.
 
 ---
 
 ## Bridge to YJS
 
-YJS tracks which operations each replica has seen using **state vectors** — a `Map<clientId, clock>` where `clock` is a logical counter. This is a G-Counter. When two YJS peers connect, they exchange state vectors to figure out what the other is missing — then only send the missing operations, not the full document.
+YJS tracks which operations each replica has seen using **state vectors** — a `Map<clientId, clock>` where `clock` is a logical counter. Our implementation uses the same structure. When two YJS peers connect, they exchange state vectors and call the equivalent of `compare()` to figure out what the other is missing — then only send the missing operations, not the full document. The last test in Category 4 demonstrates exactly this exchange.
