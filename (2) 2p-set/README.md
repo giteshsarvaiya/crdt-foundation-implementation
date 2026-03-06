@@ -1,6 +1,6 @@
 # 2P-Set (Two-Phase Set)
 
-**Type:** State-based (CvRDT) | **Paper spec:** 8–10 (Set family)
+**Type:** State-based (CvRDT) | **Paper spec:** Spec 12 — State-based 2P-Set
 
 → [Back to main README](../README.md)
 
@@ -82,3 +82,12 @@ This is 2P-Set's defining behaviour. If A adds "x" and B removes "x" concurrentl
 ## Bridge to YJS
 
 YJS's **delete set** is a tombstone set — exactly like `R` in 2P-Set. When you delete a character in a YJS document, its `Item` is not removed from the linked list. Instead it's marked as deleted. The delete set tracks which `Item` IDs have been tombstoned. On merge, delete sets are unioned — same as `R` in 2P-Set.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| Deleted Items are not removed from linked list — marked as deleted | ✅ Established | `yjs/src/structs/Item.js` — `deleted` flag |
+| Delete set is a tombstone store | ✅ Established | `yjs/src/utils/DeleteSet.js` |
+| Delete sets are unioned on merge | ✅ Established | `yjs/src/utils/DeleteSet.js` — `mergeDeleteSets()` |
+| Delete set tracks Item IDs | ⚠️ Simplified — actual encoding is `Map<clientId, clock ranges[]>` (run-length encoded), not raw IDs | `yjs/src/utils/DeleteSet.js` — `createDeleteSet()`, `writeDeleteSet()` |

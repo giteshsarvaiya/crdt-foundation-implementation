@@ -1,6 +1,6 @@
 # OR-Set (Observed-Remove Set)
 
-**Type:** State-based (CvRDT) | **Paper spec:** 11–13 (OR-Set family)
+**Type:** State-based (CvRDT) | **Paper spec:** Spec 15 (state-based interpretation — the paper's Spec 15 is op-based; see folder 7)
 
 → [Back to main README](../README.md)
 
@@ -115,3 +115,14 @@ YJS's `Item` — the unit of every insertion in a document — has a unique ID: 
 When a YJS item is deleted, it is **not removed** from the document's linked list. Its `deleted` flag is set to true, and its ID is added to the delete set. This is tombstoning — exactly what OR-Set does. On merge, delete sets are unioned, and items flagged as deleted are not surfaced to the application — exactly `lookup()` filtering by tombstones.
 
 The unique ID per operation + tombstone deletion pattern IS OR-Set. YJS is OR-Set applied to sequences.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| Every Item has a unique `{client, clock}` ID | ✅ Established | `yjs/src/structs/Item.js` — `id` field |
+| Deleted Items stay in linked list with `deleted: true` | ✅ Established | `yjs/src/structs/Item.js` — `deleted` flag |
+| Delete sets are unioned on merge | ✅ Established | `yjs/src/utils/DeleteSet.js` — `mergeDeleteSets()` |
+| Items flagged deleted are not surfaced to the application | ✅ Established | `yjs/src/types/YArray.js`, `YText.js` — iterators skip deleted items |
+| Every Y.Array element / Y.Map entry is an Item | ⚠️ Verify — Items wrap content; confirm every entry path goes through an Item | `yjs/src/types/YArray.js`, `yjs/src/types/YMap.js` |
+| Item ID added to delete set on deletion | ⚠️ Simplified — ID is encoded into `DeleteSet` as a clock range, not stored as `"replicaId-counter"` string | `yjs/src/utils/DeleteSet.js` — `addToDeleteSet()` |

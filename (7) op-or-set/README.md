@@ -144,3 +144,14 @@ The critical parallel:
 - YJS's state vector exchange on reconnect = our op log retransmission
 
 The one difference: YJS doesn't physically delete items from the linked list (it sets `deleted: true`). This is because items serve a second role as position anchors — concurrent inserts use the left/right origin IDs to determine where to insert. Physically removing an item would break those references. So YJS uses structural tombstones (the item stays, content is discarded), not the full tombstone set of state-based OR-Set.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| Every Item has a unique `{client, clock}` ID | ✅ Established | `yjs/src/structs/Item.js` — `id` field of type `ID` |
+| `DeleteSet` encodes `{client → clock ranges}` | ✅ Established | `yjs/src/utils/DeleteSet.js` — `Map<number, DeleteItem[]>` where each `DeleteItem` is `{clock, len}` |
+| Deleted Items stay in linked list with `deleted: true` | ✅ Established | `yjs/src/structs/Item.js` — `deleted` property |
+| Items serve as position anchors via left/right origin | ✅ Established | `yjs/src/structs/Item.js` — `origin`, `rightOrigin` fields |
+| Operations buffered until origins arrive (causal delivery) | ✅ Established | `yjs/src/utils/StructStore.js` — `pendingStructs` / `integratePendingStructs` |
+| Content of deleted Items is discarded (GC) | ⚠️ Verify — GC is optional in YJS; content may only be discarded when GC runs | `yjs/src/structs/Item.js` — `gc()` method; `doc.gc` flag |

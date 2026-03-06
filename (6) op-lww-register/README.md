@@ -109,3 +109,13 @@ YJS's update protocol is op-based. When a client inserts a character:
 3. **downstream (apply)**: each peer calls `Y.applyUpdate(doc, update)`. This is downstream — it integrates the operation into the document's struct store.
 
 The `{client, clock}` ID in every YJS Item is the Lamport clock in our op. Every update carries a Lamport clock value. When two peers reconnect, they exchange state vectors to figure out which ops the other is missing — then retransmit only those, exactly like the "op log replay" in our test.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| YJS update protocol is op-based | ✅ Established | `Y.applyUpdate()` public API; updates are encoded op logs |
+| Insert captures `{client, clock}` + left/right origin | ✅ Established | `yjs/src/structs/Item.js` — `id`, `origin`, `rightOrigin` fields |
+| `Y.applyUpdate(doc, update)` is the downstream call | ✅ Established | YJS public API, `yjs/src/utils/updates.js` |
+| State vector exchange finds missing ops on reconnect | ✅ Established | `y-protocols/src/sync.js` — two-step sync protocol |
+| `{client, clock}` is a Lamport clock, not wall time | ✅ Established | Clock increments per operation, never uses `Date.now()` |

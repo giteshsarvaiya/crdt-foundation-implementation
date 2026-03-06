@@ -1,6 +1,6 @@
 # G-Counter (Grow-only Counter)
 
-**Type:** State-based (CvRDT) | **Paper spec:** 3–5 (Counter family)
+**Type:** State-based (CvRDT) | **Paper spec:** Spec 6 — State-based increment-only Counter
 
 → [Back to main README](../README.md)
 
@@ -53,7 +53,7 @@ A G-Counter can never decrease. You cannot undo an increment.
 
 Every sync sends the full array — even slots that haven't changed. With 100 replicas, you send 100 integers even if only one changed.
 
-**Solution:** Delta-CRDTs. Instead of sending the full state, send only the "delta" — the part that changed since the last sync. The delta is merged the same way as the full state. YJS uses a form of this in its update protocol.
+**Solution:** Delta-CRDTs. Instead of sending the full state, send only the "delta" — the part that changed since the last sync. The delta is merged the same way as the full state. YJS doesn't use formal delta-CRDTs — it solves the same problem differently: state vector exchange identifies exactly which ops a peer is missing, then only those ops are retransmitted (op-based, not state-based delta).
 
 ---
 
@@ -84,3 +84,12 @@ G-Counter's payload IS a vector clock. Each entry answers "how much has replica 
 ## Bridge to YJS
 
 YJS tracks which operations each replica has seen using **state vectors** — a `Map<clientId, clock>` where `clock` is a logical counter. Our implementation uses the same structure. When two YJS peers connect, they exchange state vectors and call the equivalent of `compare()` to figure out what the other is missing — then only send the missing operations, not the full document. The last test in Category 4 demonstrates exactly this exchange.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| State vector = `Map<clientId, clock>` | ✅ Established — well-documented in YJS | `yjs/src/utils/StructStore.js`, `Y.encodeStateVector()` |
+| Two peers exchange state vectors on connect | ✅ Established | `y-protocols/src/sync.js` — sync step 1 |
+| State vector exchange determines which ops are missing | ✅ Established | `y-protocols/src/sync.js` — `syncStep2` sends missing structs |
+| Our `Map<replicaId, count>` structure matches YJS directly | ✅ Established | Compare our Map to `Y.encodeStateVector()` output format |

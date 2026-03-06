@@ -1,6 +1,6 @@
 # LWW-Register (Last-Write-Wins Register)
 
-**Type:** State-based (CvRDT) | **Paper spec:** 6–7 (Register family)
+**Type:** State-based (CvRDT) | **Paper spec:** Spec 8 — State-based LWW-Register
 
 → [Back to main README](../README.md)
 
@@ -96,3 +96,11 @@ Verified by the convergence tests. Two replicas write different values at differ
 ## Bridge to YJS
 
 YJS maps (used in `Y.Map`) use LWW semantics for key conflicts. If two clients set the same key concurrently, the one with the higher Lamport clock wins. YJS uses logical clocks (not wall time) to avoid clock skew issues — but the resolution strategy is identical to what we implemented here.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| `Y.Map` uses LWW for concurrent key writes | ✅ Established | `yjs/src/types/YMap.js` — `_integrate()` method |
+| Higher Lamport clock wins on conflict | ✅ Established | `yjs/src/types/YMap.js` |
+| YJS uses logical clocks, not wall time | ✅ Established | Item ID = `{client, clock}` — clock is a Lamport counter, not `Date.now()` |

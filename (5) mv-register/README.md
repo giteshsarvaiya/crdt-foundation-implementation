@@ -126,3 +126,12 @@ The engineering tradeoff:
 - **LWW** — correct for high-frequency updates where Lamport clock ordering is a good-enough heuristic and the conflict resolution overhead would dominate
 
 YJS's designers chose LWW for `Y.Map` because real-time collaboration produces so many concurrent operations that surfacing each as a conflict would destroy usability. For the document sequence itself (characters, blocks), YJS uses the YATA algorithm — a purpose-built sequence CRDT, not a register.
+
+### Verification Status
+
+| Claim | Status | Where to confirm |
+|---|---|---|
+| `Y.Map` uses LWW, not MV-Register | ✅ Established | `yjs/src/types/YMap.js` — `_integrate()` |
+| Higher Lamport clock wins on concurrent key write | ✅ Established | `yjs/src/types/YMap.js` |
+| YJS uses YATA for document sequence (not a register) | ✅ Established | YATA paper + `yjs/src/structs/Item.js` left/right origin logic |
+| "designers chose LWW because conflicts would be too noisy" | ⚠️ Design intent inferred — no official statement found | Cross-check with Kevin Jahns talks or YJS GitHub issues |
