@@ -8,6 +8,10 @@ Goal: understand the paper section by section, implement 7 CRDTs covering both s
 
 The roadmap captures the full learning plan, what was studied each day, why certain specs were skipped, and answers to every phase checkpoint — tracking the path from the paper's theory to YJS's engineering decisions.
 
+**→ [YJS Source Notes, Doubts & Contribution Tracker](./yjs-learning/README.md)**
+
+Tracks YJS source file annotations, the theory→code mapping, open questions from reading and building, and potential contribution candidates identified along the way.
+
 ---
 
 ## Table of Contents
@@ -26,6 +30,17 @@ The roadmap captures the full learning plan, what was studied each day, why cert
   - [Why Both Models — State-Based and Op-Based?](#why-both-models--state-based-and-op-based)
   - [Reading Guide — Skipped Specs](#reading-guide--skipped-specs)
   - [How to Test Each CRDT](#how-to-test-each-crdt)
+- [Spec 19 — RGA (Replicated Growable Array)](#spec-19--rga-replicated-growable-array)
+- [YJS Source Notes →](./yjs-learning/README.md)
+- [Section 4 — Garbage Collection](#section-4--garbage-collection)
+  - [4.1 Stability Problems](#41-stability-problems)
+  - [Specification 21 — Op-based OR-Cart](#specification-21--op-based-or-cart)
+  - [4.2 Commitment Problems](#42-commitment-problems)
+- [Section 5 — Putting CRDTs to Work](#section-5--putting-crdts-to-work)
+  - [5.1 Observed-Remove Shopping Cart](#51-observed-remove-shopping-cart)
+  - [5.2 E-commerce Bookstore](#52-e-commerce-bookstore)
+- [Section 6 — Comparison with Previous Work](#section-6--comparison-with-previous-work)
+- [Section 7 — Conclusion](#section-7--conclusion)
 
 ---
 
@@ -900,6 +915,386 @@ Every CRDT needs the same three categories of tests:
 **3. Merge laws** — directly verify commutativity, associativity, idempotency.
 
 Each implementation folder contains a test file covering all three categories, plus a **drawbacks** category that documents known limitations with concrete test cases.
+
+---
+
+## Spec 19 — RGA (Replicated Growable Array)
+
+### The Problem
+
+A text document is a **sequence** — a totally ordered list of characters. You need to insert and delete. The hard problem: two users concurrently insert at the **same position**. Who goes left? Who goes right? Without coordination, they must agree using only the data itself.
+
+RGA's answer: give every insertion a **unique timestamp**. Use that timestamp as the tiebreaker. Higher timestamp = higher priority = goes earlier (to the left).
+
+---
+
+### The Data Structure
+
+RGA is a **linked list** represented as a 2P-Set of vertices.
+
+```
+payload:
+  VA  — set of added vertices     (the A set from 2P-Set)
+  VR  — set of removed vertices   (tombstones, like 2P-Set's R set)
+  E   — set of directed edges     (the linked list structure)
+```
+
+A **vertex** is a pair `(atom, timestamp)`:
+- `atom` = the content — a character, string, XML tag, etc.
+- `timestamp` = unique ID, ordered consistently with causality (later event = higher timestamp)
+
+Two special sentinel vertices are always present:
+```
+⊢ = (⊥, -1)   ← left sentinel  — marks the START of the list
+⊣ = (⊥,  0)   ← right sentinel — marks the END of the list
+```
+
+Initial state: just the two sentinels with one edge between them — an empty list:
+```
+⊢ ──→ ⊣
+```
+
+After inserting `'H'` then `'i'`:
+```
+⊢ ──→ H(ts=1) ──→ i(ts=2) ──→ ⊣
+```
+
+---
+
+### Queries
+
+**`lookup(v)`** — is vertex v visible?
+```
+v ∈ VA \ VR    (added AND not tombstoned — same as 2P-Set)
+```
+
+**`before(u, v)`** — does u come before v in the sequence?
+```
+∃ a path from u to v following edges E through added vertices
+```
+
+**`successor(u)`** — what's the next vertex after u?
+```
+find v where (u, v) ∈ E    (follow u's outgoing edge)
+```
+
+---
+
+### The Key Operation: `addRight(u, a)`
+
+Insert atom `a` immediately **after** vertex `u`.
+
+**Phase 1 — atSource:**
+```
+pre: u ∈ VA \ (VR ∪ {⊣})   ← can't insert after right-sentinel or deleted vertex
+let t = now()               ← generate a unique timestamp
+let w = (a, t)              ← new vertex
+```
+
+**Phase 2 — downstream(u, w):**
+
+Start at position `u`, walk forward to find the right slot:
+
+```
+l, r := u, successor(u)
+while true:
+  let t' = timestamp of r
+  if t < t':                        ← w's timestamp is lower than r's
+    l, r := r, successor(r)         ← skip right — r goes before w
+  else:                             ← t > t' OR r = ⊣
+    E := E \ {(l, r)} ∪ {(l, w), (w, r)}   ← splice w between l and r
+    break
+```
+
+**The rule in plain English:**
+> Walk forward through the list. Skip past any vertex whose timestamp is **higher** than yours. Insert yourself before the first vertex with a **lower** timestamp (or at the end).
+
+Higher timestamp = earlier position = to the left.
+
+---
+
+### Why This Achieves Convergence
+
+Say two replicas concurrently insert at the same position after vertex `v`:
+- Replica A inserts `'X'` with `t=5`
+- Replica B inserts `'Y'` with `t=3`
+
+```
+Replica A (locally):  ⊢ → X(5) → ⊣
+Replica B (locally):  ⊢ → Y(3) → ⊣
+```
+
+**Replica A applies B's op** — `addRight(v, Y, t=3)`:
+- Successor of `v` is `X(ts=5)`. Is `3 < 5`? Yes → skip past X.
+- Successor is now `⊣(ts=0)`. Is `3 < 0`? No → splice Y between X and ⊣.
+- Result: `⊢ → X(5) → Y(3) → ⊣`
+
+**Replica B applies A's op** — `addRight(v, X, t=5)`:
+- Successor of `v` is `Y(ts=3)`. Is `5 < 3`? No → splice X between v and Y.
+- Result: `⊢ → X(5) → Y(3) → ⊣`
+
+Both replicas agree: **X before Y**. Convergence, no coordination needed.
+
+---
+
+### Sequential Inserts at the Same Position
+
+> "If a client inserts `addRight(v, a)` then `addRight(v, b)`, the latter insert occurs to the LEFT of the former."
+
+```
+addRight(v, 'a')  →  t=5  →  v → a(5)
+addRight(v, 'b')  →  t=6  →  is 6 < 5? No → splice before a
+                              v → b(6) → a(5)
+```
+
+`b` (inserted second, higher timestamp) lands **left** of `a`. Counterintuitive — but fine in practice. In real typing, after inserting `'a'` your cursor moves to `a`. The next keystroke is `addRight(a, 'b')`, not `addRight(v, 'b')`. Sequential typing works correctly. This "latest goes leftmost" rule only comes into play for **concurrent** inserts from different replicas.
+
+---
+
+### Remove
+
+```
+atSource(w):
+  pre: lookup(w)                        ← can only remove a visible vertex
+
+downstream(w):
+  pre: addRight(_, w) has been delivered ← causal delivery: add before remove
+  VR := VR ∪ {w}                         ← tombstone it
+```
+
+**Why tombstones must stay in the linked list:**
+
+When A inserts `'c'` after `'b'`, and `'b'` is concurrently deleted by B:
+```
+A: ⊢ → a → b → c    ('c' anchors its position to 'b')
+B: ⊢ → a → ⊣        ('b' is deleted)
+```
+
+When A's insert arrives at B, B must find where `'c'` goes — it was inserted after `'b'`. If `'b'` is physically gone, the position is lost and the structure is broken. Tombstoned vertices stay in the list as **position anchors**, invisible to users but structurally necessary. Same insight as OR-Set, same insight as YJS.
+
+---
+
+### What Problem Does YATA (YJS) Fix?
+
+RGA's ordering rule is correct for single insertions. It breaks when multiple replicas type **sequences** of characters concurrently at the same position.
+
+Say replica A types `"AA"` and replica B types `"BB"`, both starting after vertex `v`:
+```
+A inserts: A₁(ts=3), A₂(ts=4)  →  v → A₁ → A₂
+B inserts: B₁(ts=5), B₂(ts=6)  →  v → B₁ → B₂
+```
+
+After merge, RGA orders purely by timestamp: `v → B₂ → B₁ → A₂ → A₁`. The two users' characters **interleave**. A user who typed "AA" sees their characters separated by B's characters. That's a semantic anomaly — the document no longer reflects what either user intended.
+
+**YATA's fix:** each insertion records **two origin references** — left neighbor AND right neighbor at the time of insertion. The ordering algorithm uses both to detect when a new insert would "cut through" another user's in-progress sequence, and prevents it.
+
+Result: `"AA"` and `"BB"` stay grouped — `v → BB → AA` or `v → AA → BB` — never interleaved. That's the one problem RGA doesn't solve and YATA does. Everything else in YJS (unique IDs, tombstones, causal delivery, state vector) comes directly from RGA.
+
+---
+
+## Section 4 — Garbage Collection
+
+### The Problem
+
+Every time you remove an element from a CRDT (like 2P-Set or OR-Set), you don't actually delete it — you leave a **tombstone**: a marker saying "this existed and was removed." This is necessary so concurrent replicas don't re-add it by mistake.
+
+But tombstones **never go away** — they pile up forever. Two problems:
+1. **Memory bloat** — the payload grows even when users "delete" things
+2. **Unbalanced structures** — tree-based CRDTs (like Treedoc) get lopsided over time and slow down
+
+The paper's answer: we need **garbage collection** — a way to clean up tombstones that are no longer needed.
+
+> "Solving distributed GC would be difficult without synchronisation."
+
+Perfect GC requires all replicas to coordinate. The paper splits GC into two sub-problems with different cost levels.
+
+> "GC does not impact correctness (only performance), and the normal operations in the object's interface remain live."
+
+If GC is delayed or blocked, the CRDT still works correctly. It just stays big. GC is off the critical path.
+
+---
+
+### 4.1 Stability Problems
+
+When you apply an update, you sometimes leave extra bookkeeping in the payload to handle operations that might arrive later (concurrent with that update). Example: when you remove from an OR-Set, you leave the old tags as tombstones so a concurrent `add` that was already in-flight doesn't get mistakenly removed.
+
+**Definition 4.1 (Stability):** Update f is **stable** at replica xi if every operation concurrent with f (in delivery order) has already been delivered to xi.
+
+In plain terms: you're done waiting. Nobody else is going to show up with an operation that was racing with f. The bookkeeping for f can now be safely deleted.
+
+```
+f is concurrent with g₁, g₂, g₃
+
+Once g₁, g₂, and g₃ have all arrived at xi:
+  → f is stable at xi
+  → r(f) (the bookkeeping for f) can be discarded
+```
+
+**How stability is detected:** each operation carries a vector clock. Each replica tracks the latest vector clock received from every other replica. From this, you can compute which operations are stable.
+
+**Liveness requirement:** to detect stability, you must know all replicas, and none can crash permanently without detection. If a replica goes silent forever, you can never know if it has pending concurrent operations — so nothing is ever stable.
+
+---
+
+### Specification 21 — Op-based OR-Cart
+
+OR-Cart extends OR-Set to a map structure. Instead of storing plain elements, it stores `(isbn, quantity, unique-tag)` triplets.
+
+**Payload:** a set S of triplets, initially empty.
+
+```
+S = { ("978-0-13-468599-1", 2, tag_a),
+      ("978-0-20-253440-3", 1, tag_b) }
+```
+
+**`query get(isbn k)`:** sum all quantities for a given isbn:
+```
+N = {n' | (k', n', u') ∈ S ∧ k' = k}
+if N is empty → return 0
+else → return sum(N)
+```
+Why sum? Because concurrent adds for the same isbn create multiple co-existing triplets — the sum is the correct merged quantity.
+
+**`update add(isbn k, integer n)`:**
+- *atSource:* generate a unique tag α, compute R = all existing triplets for this isbn
+- *downstream(k, n, α, R):*
+  - precondition: every add in R has been delivered (causal delivery ensures this)
+  - `S := (S \ R) ∪ {(k, n, α)}` — replace all old entries for this isbn with one new one
+
+This is the **observed-remove** pattern: when you add a new quantity for a book, you simultaneously remove all old entries you observed. The new entry has a fresh unique tag, so it can't interfere with concurrent adds from other replicas.
+
+**`update remove(isbn k)`:**
+- *atSource:* compute R = all existing triplets for this isbn
+- *downstream(R):*
+  - precondition: every add in R has been delivered
+  - `S := S \ R` — remove exactly those entries observed at source
+
+**Why concurrent operations commute:**
+- Two adds → each creates a unique tag. They never overwrite each other.
+- Two removes → both apply set-minus. Either independent (different triplets) or idempotent (same triplets, applying twice = applying once).
+- Concurrent add + remove → the remove targets triplets that existed at source when remove was issued. A concurrent add creates a new triplet with a fresh tag — the remove never saw it and can't target it. The new add survives.
+
+---
+
+### 4.2 Commitment Problems
+
+Some GC is harder than stability detection:
+- Resetting a counter (removing zero entries from a vector clock)
+- Removing tombstones from a 2P-Set (so deleted elements can be re-added)
+- Rebalancing a tree (Treedoc)
+
+These require **unanimous agreement** across all replicas simultaneously — otherwise replicas diverge on what the "cleaned up" state looks like. This needs a **commitment protocol** (2-Phase Commit or Paxos). Expensive: all replicas must be reachable and responsive.
+
+**Optimization — the core:** don't require ALL replicas to agree. Only a small, stable **core group** of replicas participates in commitment. Other replicas asynchronously reconcile their state with core replicas. Weaker liveness requirement, practical in real systems.
+
+---
+
+## Section 5 — Putting CRDTs to Work
+
+### 5.1 Observed-Remove Shopping Cart
+
+> "A shopping cart must be always available for writes, despite failures or disconnection."
+
+The classic Amazon Dynamo use case. Users must be able to add items to their cart even when offline or when the network is partitioned. Consistency can be deferred — availability cannot.
+
+> "Linearisability would incur long response times; CRDTs provide the ideal solution."
+
+Linearisability requires coordination (network round-trips). CRDTs trade linearisability for always-on local writes.
+
+The cart is a **map from ISBN → integer**. OR-Set semantics are chosen because they minimise anomalies — specifically, add-wins / observed-remove semantics handle concurrent edits better than LWW would.
+
+**Why not LWW for the cart?** LWW would silently drop one side of a concurrent add. OR-Cart keeps both concurrent adds. Only explicit removes delete things.
+
+**Concurrent semantics:**
+- Two concurrent adds → both survive (quantities accumulate)
+- Concurrent remove + add → remove cancels old entries it observed, concurrent add's fresh triplet survives
+- Two concurrent removes → commute — either independent or idempotent
+
+This design does not incur the "remove anomaly" reported for Dynamo, and avoids the overhead of Dynamo's MV-Register approach (which surfaced conflicts and required the application to resolve them manually).
+
+### 5.2 E-commerce Bookstore
+
+Full system design:
+- Each user has one OR-Cart
+- User-to-cart mapping: a **U-Map** (derived from U-Set)
+- Cart created when account is created, removed when account is deleted
+
+**Web interface semantics:**
+
+| User action | Interface call |
+|---|---|
+| Select book b with quantity q | `add(b, q)` |
+| Increase to q' | `add(b, q' - q)` (add the delta) |
+| Decrease to q' | `remove(b)` then `add(b, q')` |
+| Cancel book | `remove(b)` |
+
+Causal delivery + observed-remove guarantee that your own actions are always reflected in your own view — you can't see a stale version of your own edits.
+
+When two users share the same account (e.g. family members):
+- Concurrent adds → both survive, quantities accumulate — expected
+- Concurrent remove + add → remove cancels observed entries, new add survives — cleanest possible semantics in this case
+
+---
+
+## Section 6 — Comparison with Previous Work
+
+### 6.1 Commutativity in Transactional Systems
+
+Even in traditional database systems, researchers noticed that **commutative transactions** are easier to reconcile. The CRDT paper formalises and extends this intuition.
+
+The paper takes a stricter stance than earlier work: **design every operation to commute**. Not just some. This is more restrictive but eliminates the need for case-by-case conflict resolution logic.
+
+Helland and Campbell's earlier suggestion — use associative, commutative and idempotent operations for fault tolerance — is essentially the merge laws for CvRDTs. The CRDT paper formalises this into a rigorous mathematical framework.
+
+### 6.3 Commutativity-Oriented Design
+
+**CvRDT foundations:** the state-based model (monotonic semilattice + LUB merge) was introduced by Baquero and Moura. This paper extends their work with a specification language, op-based CRDTs, more complex examples, and GC.
+
+**RGA (Spec 19):** Roh et al. independently developed the Replicated Abstract Data Type concept. Every insert gets a unique `{replicaId, clock}` ID — concurrent inserts at the same position are ordered by comparing IDs. YATA (YJS's algorithm) is a refinement of RGA. Roh's observation that causal delivery can eliminate the need for some downstream preconditions was later formalised in this paper.
+
+**Operational Transformation (OT):** Ellis and Gibbs' OT approach allows non-commutative operations but **transforms** them on arrival to account for what's changed since they were issued. The paper's position: designing for commutativity upfront is cleaner and simpler than transforming after the fact.
+
+> "Oster et al. demonstrate that most OT algorithms for a decentralized architecture are incorrect."
+
+Google Docs uses OT with a central server (which imposes a total order on all operations, trivially avoiding the concurrent transform problem). Decentralized OT is notoriously hard to get right. CRDTs avoid this problem entirely by design.
+
+**CALM (Consistency As Logical Monotonicity):** Alvaro et al.'s Bloom language lets you write programs and statically detect which parts are non-monotonic (require coordination). Similar spirit to CvRDTs — monotonicity = convergence. But more restrictive: Bloom cannot express `remove` without synchronisation. CRDTs (with tombstones or causal delivery) can.
+
+---
+
+## Section 7 — Conclusion
+
+The whole paper in one line:
+
+> "A CRDT is a replicated data type for which some simple mathematical properties guarantee eventual consistency."
+
+The "simple mathematical properties" are:
+- **CvRDT:** successive states form a monotonic semilattice, merge = LUB
+- **CmRDT:** concurrent operations commute
+
+**State-based** needs nothing from the network except that states occasionally get delivered — no ordering guarantees, no reliability required. Idempotent merge handles duplicates, commutativity handles reordering.
+
+**Op-based** needs more: reliable delivery (no drops, no duplicates) and causal ordering. Harder infrastructure, but pays off in bandwidth efficiency — sending one operation per keystroke instead of the full document.
+
+Both converge to the same correct state **without any synchronisation**.
+
+**The design hierarchy the paper reveals:**
+
+```
+G-Set (add only)
+  └── 2P-Set (add + remove with tombstones)
+        └── OR-Set (add + remove with unique tags, add-wins)
+              └── OR-Cart / U-Map (OR-Set applied to key-value maps)
+                    └── Y.Map (YJS's implementation)
+```
+
+Each level inherits the commutativity properties of the level below. Each level adds one new capability (removes, re-adds, map semantics) by solving one new problem (tombstoning, unique tagging, observed-remove on keys).
+
+**GC is an optional maintenance concern**, not a safety concern. CRDTs are correct with or without GC — GC just prevents unbounded growth.
+
+**Why this paper matters:**
+
+Before it, eventually-consistent systems were built by intuition and testing. This paper provides the first systematic theoretical foundation — a unified framework that explains **why** things work, not just that they work. Every design decision in YJS, Automerge, and other production CRDTs traces back to the tradeoffs identified here.
 
 ---
 

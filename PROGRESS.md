@@ -8,8 +8,8 @@ Update this file as you move through each phase. Mark items done with [x].
 
 ## Current Position
 
-**Phase:** 2.5 — Pre-YJS Reading
-**Status:** All 7 implementations done. Ready to read Specs 19 and 21 from the paper, then move to YJS
+**Phase:** 3 — YJS Internals
+**Status:** All 7 implementations done. Specs 19 (RGA) and 21 (OR-Cart) read and documented. Ready to move to YJS.
 
 ---
 
@@ -46,10 +46,10 @@ Update this file as you move through each phase. Mark items done with [x].
 
 Read these two specs from the paper — no implementation, just understand the idea:
 
-- [ ] **Spec 19 — RGA** (Replicated Growable Array)
+- [x] **Spec 19 — RGA** (Replicated Growable Array)
   Why: understand what YATA is fixing before you read YJS
 
-- [ ] **Spec 21 — OR-Cart** (Observed-Remove Shopping Cart)
+- [x] **Spec 21 — OR-Cart** (Observed-Remove Shopping Cart)
   Why: OR-Set applied to a map → direct precursor to Y.Map
 
 Optional reads (do these if you have time, skip if not):
@@ -60,28 +60,49 @@ Optional reads (do these if you have time, skip if not):
 
 ---
 
-## Phase 3 — YJS Internals (Days 6+)
+## Phase 3 — YJS Source Reading
 
-Read in this order inside the YJS source:
+Detailed notes per file in [yjs-learning/](./yjs-learning/README.md).
 
-- [ ] `StructStore` — how items are stored and indexed
-- [ ] `Item` structure — the unit of every insertion (`{client, clock}` ID, content, links)
-- [ ] `DeleteSet` — the tombstone system (maps directly to our tombstone work)
-- [ ] Update encoding — how YJS compresses and transmits state
-- [ ] Garbage collection — when and why YJS GC is optional
+**Original source files (v1 architecture):**
+- [x] `src/structs/Item.js` — core unit, `integrate()` (YATA algorithm)
+- [x] `src/utils/StructStore.js` — state vector as G-Counter
+- [x] `src/utils/DeleteSet.js` — tombstone system (replaced by IdSet in refactor)
+- [x] `src/types/AbstractType.js` — shared base for Y.Text / Y.Map / Y.Array
 
-Connect to our implementations:
+**Refactored source files (current main branch):**
+- [x] `src/utils/Doc.js` — document root, event hub, clientID
+- [x] `src/utils/Transaction.js` — commit pipeline, `cleanupTransactions()`
+- [x] `src/utils/IdSet.js` — DeleteSet replacement, range set with diff/intersection/slice
+- [x] `src/utils/BlockSet.js` — network-layer struct container, exclude/merge logic
 
-- [ ] Recognize state vector as G-Counter
-- [ ] Recognize DeleteSet as the tombstone set (2P-Set `R` / OR-Set `tombstones`)
-- [ ] Recognize Item ID `{client, clock}` as OR-Set unique tag
-- [ ] Understand why Y.Map uses LWW (not MV-Register) for key conflicts
-- [ ] See how YATA differs from RGA (what interleaving problem it solves)
+Connect to implementations:
+
+- [x] Recognize state vector as G-Counter
+- [x] Recognize DeleteSet/IdSet as 2P-Set R / OR-Set tombstones
+- [x] Recognize Item `{client, clock}` as OR-Set unique tag
+- [x] Understand why Y.Map uses LWW (not MV-Register)
+- [x] Annotate the YATA `integrate()` method
 
 ---
 
-## Phase 4 — Optional Depth
+## Phase 4 — Build: Collaborative Markdown Editor
 
-- [ ] YATA paper (basis for YJS algorithm) — only after Phase 3
+- [ ] Project scaffolded (YJS + y-webrtc + y-indexeddb + editor)
+- [ ] Collaborative text editing working (Y.Text)
+- [ ] Formatting / marks working (Y.Map)
+- [ ] Presence / cursors working (Awareness)
+- [ ] Offline sync working (disconnect tab, edit, reconnect)
+- [ ] Persistence working (reload page, state survives)
+- [ ] Two browser tabs fully in sync as separate replicas
+
+Log build notes and surprises in [YJS.md](./YJS.md) under Build Log.
+
+---
+
+## Phase 5 — Contribute or Go Deeper
+
+- [ ] Identify at least one contribution candidate from Phase 4 (bug / dx / docs / feature)
+- [ ] YATA paper — optional, after Phase 4
 - [ ] Kevin Jahns talks/slides — practical engineering decisions
-- [ ] Undo support for CRDTs — if building an editor
+- [ ] Automerge comparison — optional depth

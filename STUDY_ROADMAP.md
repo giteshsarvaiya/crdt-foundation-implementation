@@ -79,26 +79,66 @@ Optional reads (good context, not required):
 | Spec 9 (Op-based LWW) | Makes atSource/downstream split concrete on a familiar example |
 | Spec 20 (Continuum sequence) | Understand the two schools of sequence CRDT (identifier-based vs linked-list) |
 
-### Phase 3 — YJS Internals (Days 6+)
+### Phase 3 — YJS Source Reading
 
-Read in this order:
-- StructStore
-- Item structure
-- DeleteSet
-- Update encoding
-- Garbage collection
+Read 4 files in this order. Goal: confirm every CRDT concept maps to production code. Not memorize — recognize.
 
-Compare your implementations to YJS:
+| # | File | What it teaches |
+|---|------|-----------------|
+| 1 | `src/structs/Item.ts` | Core unit of every insert. Find `integrate()` — that's YATA (~50 lines). |
+| 2 | `src/utils/StructStore.ts` | How Items are stored by clientId. State vector = G-Counter. |
+| 3 | `src/utils/DeleteSet.ts` | Tombstone system. Range compression over 2P-Set's naive approach. |
+| 4 | `src/types/AbstractType.ts` | How Y.Text / Y.Map / Y.Array share the same base. Where LWW lives for maps. |
 
-| Your Implementation | YJS Equivalent |
+Theory → YJS mapping:
+
+| Our Implementation | YJS Equivalent |
 |---|---|
 | G-Counter vector | State vector (`Map<clientId, clock>`) |
-| Tombstone set (2P-Set `R`) | DeleteSet (structural tombstones) |
+| 2P-Set tombstone set `R` | DeleteSet (structural tombstones) |
 | LWW-Register timestamp | Lamport clock on `Y.Map` keys |
-| OR-Set (element, tag) pair | Item with unique `{client, clock}` ID |
-| MV-Register concurrent value set | Why YJS chose LWW over MV for `Y.Map` (surfacing conflicts is too noisy for text) |
-| **Op-LWW write() → op → apply()** | **YJS insert: atSource → Update → applyUpdate()** |
-| **Op-OR-Set add/remove ops** | **YJS insert/delete: broadcast ops, no tombstone content** |
+| OR-Set `(element, tag)` pair | Item with unique `{client, clock}` ID |
+| MV-Register concurrent value set | Why YJS chose LWW over MV for `Y.Map` |
+| Op-LWW `write() → op → apply()` | YJS insert: atSource → Update → `applyUpdate()` |
+| Op-OR-Set add/remove ops | YJS insert/delete — no accumulating tombstone content |
+| RGA linked list + timestamp ordering | YATA `integrate()` — same loop, adds rightOrigin check |
+
+Track all source notes, questions, and insights in **[YJS.md](./YJS.md)**.
+
+---
+
+### Phase 4 — Build: Collaborative Markdown Editor
+
+Build a real project that exercises all parts of YJS. Not a tutorial — something with offline sync, presence, and persistence.
+
+**Stack:** YJS + y-webrtc + y-indexeddb + Tiptap or CodeMirror
+
+| Feature | YJS concept exercised |
+|---|---|
+| Collaborative text editing | Y.Text + YATA insert |
+| Bold / italic / headings | Y.Map on text marks |
+| Multiple cursors / user presence | Awareness protocol |
+| Offline editing + sync on reconnect | Provider + state vector exchange |
+| Persist across page reloads | y-indexeddb provider |
+| Two browser tabs as two replicas | y-webrtc provider |
+
+**While building:** log every "why does YJS do it this way?" moment in [YJS.md](./YJS.md) under Doubts and Potential Contributions. These become your research questions and contribution candidates.
+
+---
+
+### Phase 5 — Contribute or Go Deeper
+
+By end of Phase 4 you'll naturally have one of:
+- A bug or limitation you hit → contribution candidate
+- A behavior you want to understand fully → read the YATA paper
+
+| Path | Next step |
+|---|---|
+| Found a bug / missing feature | Open YJS source, find the file (you know the structure), fix it |
+| Want deeper theory | Read the YATA paper (Nicolaescu et al.) |
+| Want to compare approaches | Read how Automerge does it differently (JSON CRDT, different tradeoffs) |
+
+---
 
 ### Skipped Phases (from original plan)
 
